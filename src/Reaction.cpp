@@ -49,9 +49,6 @@ namespace DynamicRagdollSystem
 			const auto to = a_actor->GetPosition();
 			a_dir = Unit(Vec3{ to.x - from.x, to.y - from.y, 0.0f });
 		}
-		// A downward shot pushed leg bodies, already at floor level, through the ground. Keep only the horizontal
-		// and upward part (not renormalized, so a steep shot stays a small push).
-		a_dir.z = std::max(a_dir.z, 0.0f);
 		a_hitBody = 0x7FFFFFFF;
 		RE::bhkNPCollisionObject* colObj = nullptr;
 		std::memcpy(&colObj, impact + 0x30, sizeof(colObj));
@@ -551,7 +548,10 @@ namespace DynamicRagdollSystem
 			const bool isHit = s.ref->id.m_value == a_stumble.hitBody;
 			if (!isHit && s.pos.z <= com.z) continue;
 			const float speed = a_stumble.burning ? kBurnShove : isHit || !hitKnown ? kHitPush : kBodyPush;  // catching fire: a stagger, not a shot
-			const auto impulse = Scale(a_stumble.hitDir, speed / s.inverseMass);
+			auto impulse = Scale(a_stumble.hitDir, speed / s.inverseMass);
+			// Feet and calves sit at floor level: a downward shot pushed them through the ground. Horizontal and
+			// upward part only (not renormalized, so a steep shot stays a small push).
+			if (s.ref->foot || s.ref->knee) impulse.z = std::max(impulse.z, 0.0f);
 			RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
 			g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
 			++pushed;

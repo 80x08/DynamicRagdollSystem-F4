@@ -120,6 +120,15 @@ namespace DynamicRagdollSystem
 			++feet;
 		}
 		a_death.groundFeet = feet;
+		// Landing spot of the current step (stairs, slopes), once per step.
+		if (a_death.stepFoot && !a_death.stepGroundTried) {
+			a_death.stepGroundTried = true;
+			const auto& to = a_death.stepTo;
+			a_death.stepGroundHit = CastGround(cell, Vec3{ to.x, to.y, to.z + kStepRayLift }, a_death.stepGround);
+			if (a_death.groundCaptured)
+				REX::INFO("DynamicRagdollSystem: {:08X} death step {} landing ground {}"sv, a_death.formID, a_death.steps,
+					a_death.stepGroundHit ? std::format("{:+.2f} from the ground at death", a_death.stepGround - a_death.groundAtDeath) : "not found"s);
+		}
 		if (feet == 0 || !hitAny || !trunk) return;
 		const auto trunkPos = BodyPosition(worldBodies[trunk->index]);
 		a_death.groundTrunk = trunkPos.z - kRayDown;
@@ -398,8 +407,10 @@ namespace DynamicRagdollSystem
 					}
 				return m > 0.0f ? z / m : com.z;
 			}();
+			// Any foot on its own ground (the two-foot average dropped support while one foot was still planted).
 			// Two-sided: feet that sank through the ground are not standing (one-sided kept supporting a sinking body).
-			grounded = std::abs(feet.z - feetLevel) < kGroundTolerance;
+			for (const auto& s : samples)
+				if (s.ref->foot && std::abs(s.pos.z - footLevel(s.ref->id.m_value)) < kGroundTolerance) grounded = true;
 			if (com.z - trunkLevel > kBraceGround) braceLean = lean;
 			// The body sinks with the knee buckle instead of being held at standing height (which fought the bend).
 			const float sink = kSinkDepth * std::min(1.0f, 1.5f * (1.0f - fade)) * std::clamp(kDeathKneeBend / 80.0f, 0.0f, 1.5f);
@@ -456,6 +467,8 @@ namespace DynamicRagdollSystem
 						a_stumble.stepFrom = swing->pos;
 						a_stumble.stepTo = Add(swing->pos, step);
 						a_stumble.stepStart = a_now;
+						a_stumble.stepGroundTried = false;  // landing ray next frame (UpdateGround)
+						a_stumble.stepGroundHit = false;
 						a_stumble.lastStepSide = swing->ref->side;
 						a_stumble.stepTime = kStepTime / (1.0f + 0.3f * speed);  // quicker steps when moving fast
 						REX::INFO("DynamicRagdollSystem: {:08X} death step {} with {} foot, length {:.2f}"sv, a_stumble.formID,
@@ -474,9 +487,17 @@ namespace DynamicRagdollSystem
 				} else {
 					const auto& from = a_stumble.stepFrom;
 					const auto& to = a_stumble.stepTo;
+					// Land at standing height on the ground under the target (as footLevel), so stairs and slopes are
+					// stepped onto. No hit, or a change too big to be a step: the start height, as before.
+					float toZ = from.z;
+					if (rays && a_stumble.stepGroundHit) {
+						const float level = rest + a_stumble.stepGround - a_stumble.groundAtDeath;
+						if (std::abs(level - from.z) < kStepMaxRise) toZ = level;
+					}
 					const Vec3 desiredPos{ from.x + (to.x - from.x) * phase, from.y + (to.y - from.y) * phase,
-						from.z + kStepHeight * std::sin(3.14159265f * phase) };
-					const Vec3 feedForward{ (to.x - from.x) / a_stumble.stepTime, (to.y - from.y) / a_stumble.stepTime, 0.0f };
+						from.z + (toZ - from.z) * phase + kStepHeight * std::sin(3.14159265f * phase) };
+					const Vec3 feedForward{ (to.x - from.x) / a_stumble.stepTime, (to.y - from.y) / a_stumble.stepTime,
+						(toZ - from.z) / a_stumble.stepTime };
 					const auto desiredV = Add(feedForward, Scale(Sub(desiredPos, swing->pos), kSwingKp));
 					Vec3 deltaV = Sub(desiredV, swing->motion.linear);
 					const float n = Length(deltaV), cap = kSwingMaxAccel * dt;
@@ -510,7 +531,7 @@ namespace DynamicRagdollSystem
 				overFeet = std::clamp(1.0f - (distance - kSupportBase) / kSupportFade, 0.0f, 1.0f);
 				overFeetLog = overFeet;
 			}
-			std::vector<std::pair<const Sample*, Vec3>> pushes;
+			std::vector<std::tuple<const Sample*, Vec3, float>> pushes;  // body, velocity change, share of dOmega it turns by
 			Vec3 total{};
 			if (catchable > 0.0f && overFeet > 0.0f) {
 				for (const auto& s : samples) {
@@ -519,16 +540,22 @@ namespace DynamicRagdollSystem
 					// Weight support goes to every body (supporting only the torso made it hover over the legs);
 					// the horizontal/tilt part skips the legs, which stay planted by friction instead of being dragged.
 					Vec3 deltaV{ 0.0f, 0.0f, dCom.z };
+					float turn = 0.0f;
 					if (!s.ref->leg) {
 						const auto r = Sub(s.pos, feet);
 						const auto spin = Cross(dOmega, r);
 						deltaV = Add(dCom, spin);
+						// Trunk only: dOmega is measured on the trunk; loose limbs (owned by grip/brace/flail) twitched.
+						turn = s.ref->pelvis || s.ref->spine ? 1.0f : 0.0f;
 					}
 					const float n = Length(deltaV), cap = kBalanceMaxAccel * dt;
 					if (!std::isfinite(n) || n < 1.0e-4f) continue;
-					if (n > cap) deltaV = Scale(deltaV, cap / n);
+					if (n > cap) {
+						deltaV = Scale(deltaV, cap / n);
+						turn *= cap / n;
+					}
 					deltaV = Scale(deltaV, overFeet);
-					pushes.push_back({ &s, deltaV });
+					pushes.push_back({ &s, deltaV, turn * overFeet });
 					total = Add(total, Scale(deltaV, 1.0f / s.motion.inverseMass));
 				}
 			}
@@ -537,7 +564,7 @@ namespace DynamicRagdollSystem
 			const float allowed = kFootFriction * std::max(total.z, 0.0f);
 			const float sideScale = sideways > allowed && sideways > 1.0e-6f ? allowed / sideways : 1.0f;
 			Vec3 reaction{};
-			for (auto& [s, deltaV] : pushes) {
+			for (auto& [s, deltaV, turn] : pushes) {
 				deltaV.x *= sideScale;
 				deltaV.y *= sideScale;
 				const auto impulse = Scale(deltaV, 1.0f / s->motion.inverseMass);
@@ -545,6 +572,17 @@ namespace DynamicRagdollSystem
 				RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
 				g_linearImpulse(npWorld, s->ref->id.m_value, &nativeImpulse);
 				++pushed;
+				// A rigid rotation also turns the trunk bodies about their own centres; the linear part above only
+				// carries them around the arc. No reaction for this part: it is small next to the arc (own inertia vs m*r^2).
+				if (turn > 0.0f && g_angularImpulse) {
+					float inverse[3][3]{};
+					AddWorldInverse(s->motion, inverse);
+					Vec3 angular{};
+					if (Solve3(inverse, Scale(dOmega, turn), angular)) {
+						RE::hkVector4f angularImpulse{ angular.x, angular.y, angular.z, 0.0f };
+						g_angularImpulse(npWorld, s->ref->id.m_value, &angularImpulse);
+					}
+				}
 			}
 			// Sideways reaction only: pushing the light feet down every frame punched them through thin terrain
 			// collision (exterior heightfields). The ground supplies the upward part anyway.
@@ -564,12 +602,15 @@ namespace DynamicRagdollSystem
 				for (const auto& s : samples) {
 					const bool isHit = s.ref->id.m_value == a_stumble.hitBody;
 					if (!isHit && s.pos.z <= com.z) continue;
-					const auto impulse = Scale(a_stumble.hitDir, (isHit || !hitKnown ? kHitPush : kBodyPush) * kDeathPushScale / s.motion.inverseMass);
+					auto impulse = Scale(a_stumble.hitDir, (isHit || !hitKnown ? kHitPush : kBodyPush) * kDeathPushScale / s.motion.inverseMass);
+					if (s.ref->foot || s.ref->knee) impulse.z = std::max(impulse.z, 0.0f);  // floor-level bodies: not into the ground
 					ownPush = Add(ownPush, impulse);
 					RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
 					g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
 				}
 				// Our own push is not weapon knockback: add it to the baseline so the knockback trim leaves it alone.
+				// Not its downward part: the trim ignores falling, and a lowered baseline would read as upward knockback.
+				ownPush.z = std::max(ownPush.z, 0.0f);
 				a_stumble.moveVel = Add(a_stumble.moveVel, Scale(ownPush, 1.0f / mass));
 				// Blast: the same velocity on every body part, away from the blast and upward.
 				if (a_stumble.explosionPush > 0.0f) {

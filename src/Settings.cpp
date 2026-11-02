@@ -4,12 +4,16 @@ namespace DynamicRagdollSystem
 {
 
 	// Written when the INI is missing. Keep in sync with res/DynamicRagdollSystem.ini.
-	constexpr std::string_view kDefaultIni = R"INI(; DynamicRagdollSystem settings. Read at game start and again whenever a save is loaded (bDebugLog only at game start).
+	constexpr std::string_view kDefaultIni = R"INI(; DynamicRagdollSystem settings. Read at game start and again whenever a save is loaded (bDebugLog and
+; bEnableIniHotReload only at game start).
 ; Values outside the allowed range are clamped. Missing values use the defaults shown.
 
 [General]
 ; 1 = write diagnostic messages to DynamicRagdollSystem.log. Only read at game start.
 bDebugLog=1
+; 1 = re-read this file about once a second whenever it is saved, so changes apply without loading a save.
+; 0 = only at game start and on save load. Only read at game start.
+bEnableIniHotReload=0
 
 [Reaction]
 ; Minimum damage of a single hit that triggers a reaction. Range 0-10000.
@@ -174,6 +178,11 @@ fExplosionLift=0.5
 				REX::INFO("DynamicRagdollSystem: wrote default settings to {}"sv, path);
 			}
 		}
+		static bool first = true;  // bEnableIniHotReload is only read at game start
+		if (first) {
+			first = false;
+			kIniHotReload = GetPrivateProfileIntA("General", "bEnableIniHotReload", 0, path) != 0;
+		}
 		const auto read = [&](const char* a_key, float& a_value, float a_min, float a_max) {
 			char buffer[64]{};
 			GetPrivateProfileStringA("Reaction", a_key, "", buffer, sizeof(buffer), path);
@@ -268,6 +277,7 @@ fExplosionLift=0.5
 		readDeath("fDeathCatchSpeed", kCatchSpeed, 0.0f, 20.0f);
 		readDeath("fDeathCatchRange", kCatchRange, 0.0f, 20.0f);
 		readDeath("fDeathKneeBend", kDeathKneeBend, 0.0f, 120.0f);
+		REX::INFO("DynamicRagdollSystem: settings: hotReload {}"sv, kIniHotReload);
 		REX::INFO("DynamicRagdollSystem: settings: minDamage {} cooldown {} reaction {} softness {} recover {} blendOut {} push {} bodyPush {} catchUp {}"sv,
 			kMinDamage, kCooldown, kReactionTime, kHitSoftness, kRecoverTime, kBlendOut, kHitPush, kBodyPush, kMaxCatchUpSpeed);
 		REX::INFO("DynamicRagdollSystem: burn settings: reaction {} stiffness {} arms {} flail {} shove {} ({}-{}s) fall {}-{}s force {}; down roll {} ({}-{}s) grace {}s max {}s; death twitch {}-{} roll {}-{} time {}-{}s"sv,
@@ -280,5 +290,23 @@ fExplosionLift=0.5
 			kDeathStumbleTime.min, kDeathStumbleTime.max, kDeathSupport.min, kDeathSupport.max, kDeathUpright.min, kDeathUpright.max,
 			kDyingTime.min, kDyingTime.max, kTwitchStrength.min, kTwitchStrength.max, kRollStrength.min, kRollStrength.max,
 			kDeathBraking.min, kDeathBraking.max);
+	}
+
+
+	void PollSettings(float a_now)
+	{
+		if (!kIniHotReload) return;
+		static float          nextCheck = 0.0f;
+		static std::uint64_t  lastWrite = 0;
+		if (a_now < nextCheck) return;
+		nextCheck = a_now + 1.0f;
+		WIN32_FILE_ATTRIBUTE_DATA data{};
+		if (!GetFileAttributesExA(kIniPath, GetFileExInfoStandard, &data)) return;
+		const std::uint64_t write = (std::uint64_t{ data.ftLastWriteTime.dwHighDateTime } << 32) | data.ftLastWriteTime.dwLowDateTime;
+		if (lastWrite != 0 && write != lastWrite) {
+			REX::INFO("DynamicRagdollSystem: INI changed, reloading"sv);
+			LoadSettings();
+		}
+		lastWrite = write;
 	}
 }

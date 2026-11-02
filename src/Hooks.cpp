@@ -6,6 +6,7 @@ namespace DynamicRagdollSystem
 	void OnWorldUpdate(RE::bhkWorld* a_world)
 	{
 		const float now = NowSeconds();
+		PollSettings(now);
 		ScanForBurning(now);
 		ProcessPending();
 		{

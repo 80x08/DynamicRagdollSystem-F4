@@ -172,6 +172,9 @@ namespace DynamicRagdollSystem
 		Vec3                    stepFrom{};
 		Vec3                    stepTo{};
 		float                   stepStart{ 0.0f };
+		float                   stepGround{ 0.0f };      // ground under stepTo (ray in UpdateGround, once per step)
+		bool                    stepGroundTried{ false };
+		bool                    stepGroundHit{ false };
 		float                   nextStep{ 0.0f };
 		std::uint32_t           steps{ 0 };
 		std::uint32_t           gripHand{ 0 };   // body id of the hand clutching the wound, 0 = none chosen yet
@@ -299,6 +302,7 @@ namespace DynamicRagdollSystem
 	inline Range kExplosionPush{ 6.0f, 10.0f };    // physics units/s: blast velocity given to every body part
 	inline float kExplosionLift = 0.5f;           // upward part of the blast push, as a fraction of it
 	inline Range kDeathBraking{ 2.4f, 2.7f };     // horizontal braking of the dying body while its feet are planted, 1/s
+	inline bool  kIniHotReload = false;           // [General] bEnableIniHotReload, read at game start only
 
 	// Death stumble controller (v0.1.x). Gains are per second; caps are torque/force, converted with dt.
 	constexpr float kJointKp = 20.0f;
@@ -320,6 +324,8 @@ namespace DynamicRagdollSystem
 	constexpr float kKneeMinStiffness = 1.0f;   // knees bend with at least this stiffness, even if fDeathStiffness is low
 	constexpr float kKneeMinFade = 0.4f;        // knee drive never fades below this during the stumble
 	constexpr float kStepCooldown = 0.12f;
+	constexpr float kStepRayLift = 0.5f;        // landing ray starts this much higher than the foot rays (a step up)
+	constexpr float kStepMaxRise = 0.5f;        // landing height change beyond this is not a step: keep the start height
 	constexpr float kSwingKp = 20.0f;
 	constexpr float kSwingMaxAccel = 120.0f;
 	constexpr float kGroundTolerance = 0.2f;   // feet within this of the captured ground count as standing
@@ -588,6 +594,7 @@ namespace DynamicRagdollSystem
 	// Settings.cpp
 	bool DebugLogEnabled();
 	void LoadSettings();
+	void PollSettings(float a_now);  // bEnableIniHotReload: re-reads the INI when the file changes
 
 	// Physics.cpp
 	RE::bhkWorld* GetWorld(RE::Actor* a_actor);

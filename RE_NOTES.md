@@ -109,7 +109,12 @@ graph is not "added" (graph+0x3B8 = 0, interface not added).
 - Computes `driver+0xB8` (powered controller active) and `+0xB9` (rigid-body controller active) **inside the
   call** from the output tracks; reading them before the call shows 0.
 - "Lock" calls inside (`0x141720910`/`0x141720920`) are empty `ret` stubs.
-- Rigid-body/powered controller dispatch: `0x1418A83F0` (ID 660257). Per-body keyframing `0x1418A91E0`.
+- Rigid-body/powered controller dispatch: `0x1418A83F0` (ID 660257). Per-body keyframing `0x1418A91E0`
+  (hard keyframe: sets linear/angular velocity to reach the target pose in one step, 1/dt).
+- Which bodies are hard-keyframed (per-bone record, 0x30 bytes, byte `+0x20`): track 17 value ≥ 1, read only when
+  track 17's weight ≥ 1; every bone listed in track 18 (explicit poses, sparse: palette of 0x30 transforms + s8
+  bone map; sets `+0x20` and `+0x21` = use that transform as target); and every bone with no track 13 and no track
+  15 entry (map −1, or the track off). The motion type of each body is switched (world vfunc `+0xB0`) to match.
 
 ### postPhysics
 `0x1416FF3A0` (ID 560275), called from `0x14161C6F0` (ID 1414229) at `+0x1EA`. If `+0xB8` or `+0xB9` is set,
@@ -141,6 +146,17 @@ Engine values during get-up: `0.17 0 1 0.6 0.1 1.4 1.8 0.25 0.3 0.3 0.03 0.1 | 0
 fractions **per update** (scale with frame rate).
 
 Powered values: knockdown `maxForce 0` (limp) `tau 0.8 damping 1.0 2.0 1.0`; get-up start `800 0.6 0.95 3 1`.
+
+Get-up (knock state 6) per frame, v0.4.91 probe (one human NPC, explosion knockdown): first frame track 15 weight
+1 `maxForce 800`, track 13 empty, track 17 18 bones at FLT_MAX. From ~0.1 s to the end (5.2 s): track 13 weight 1
+with the gains above, track 14 0.5 s, track 15 off, **track 17 all 18 bones = 1.0 (every body keyframed)**. So during
+the get-up the bodies are placed on the animation; the track 13 gains have no visible effect. driveToPose ran
+~15 times/s for that driver, with ~1.5 s gaps.
+Tested (v0.4.92–0.4.96): zeroing track 17 for the 12 non-pelvis/leg bones does un-keyframe them by driveToPose's own
+rules (no track 18 poses, all bones have a track 13 entry), and scaling the track 13 gains to 0.1 was applied, but
+the get-up looked identical to vanilla (arms still clip through walls). So during a get-up the visible pose does not
+follow those ragdoll bodies; driving the get-up through the generator output is a dead end. Not traced further:
+postPhysics blending during knock state 6, the driver `+0x58` body set that driveToPose skips.
 
 World-from-model modes (exe strings `0x2E641B0`…): USE_OLD 0, USE_INPUT 1, COMPUTE 2, NONE 3, RAGDOLL 4.
 
@@ -208,8 +224,16 @@ while the ragdoll is driven.
   `bleedoutTimer`, counts down, set on 2→1 / 4→3) runs out OR the body is calm (`0x140DA4880`: first collision
   body in the 3D tree, linear speed² < 0.025, or < 0.15 with actor +0x2D0 bit 18) → knockState 8 and task 0xD
   — unless the actor is dead or Actor+0x2D0 bit 31 is set (= Paralysis > 0; set by the Paralysis AV callback
-  0x140DF8180). `0x140E73C10`: a paralyzed actor in knock state 0 or 6 is knocked down (state 3, ragdoll). → `0x140E86810` start get-up (raycast for room, get-up type 1 or 2,
+  0x140DF8180). `0x140E73C10`: a paralyzed actor in knock state 0 or 6 is knocked down (state 3, ragdoll). → `0x140E86810` start get-up (get-up type 1 or 2,
   get-up action, knockState 5).
+- Get-up type (graph int var `DAT_1458D5248`), `0x140E86810`: 1 = normal (default). 2 = underwater, only when
+  Actor+0x2D0 bit 18 (in water) is set and the body is ≥ 0.875 of the actor height below the water surface:
+  `0x140D86F00(actor, pos, cell, 0.875)` → `0x140D86F30` = (water height − pos.z) / height (`0x140D866A0`),
+  water height from `0x1403B4D90` (cell `+0x40` bit 1 has water, `+0x60` water height; also scans loaded exterior
+  cells). pos = `0x140D703B0`: the ragdoll's bounds centre (game units), else the actor position. If the centre is
+  not deep enough, an all-hits ray up half the height re-tests at a hit point (water surface). No front/back choice
+  in code: face-up vs face-down is picked inside the behavior graph *(not traced)*. Then the get-up action (default
+  object `+0x360`, `0x140E86640`) and knockState 5. Also clears the face's dead flag (`SetDead(0,0)`).
 - Graph event handlers (vtables `[dtor, handler]`): RemoveRagdoll `0x142D4C4D8`, RagdollStart `0x142D4C4F0`,
   GetUpStart `0x142D4C508` (→ `0x140F70850`: place controller at ragdoll, knockState 6), GetUpEnd `0x142D4C520`
   (→ `0x140F70AD0`: remove ragdoll, queue task 0xC), RagdollAndGetUp `0x142D4C538`.
