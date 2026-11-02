@@ -69,6 +69,12 @@ inside are debug thread checks only.
   sets the low 7 bits). The knockdown uses layer 8 (biped) and never restores it.
 - Layers seen: live ragdoll 8 (biped, collides with character controllers), death ragdoll 32 (DeadBip),
   `kBipedNoCC` 33 = still hit by projectiles, ignored by character controllers.
+- Layer collision table (verified in Ghidra): `bhkCollisionFilter*` at global ID 469495 `0x1458E0AD8` (vtable ID
+  599770 `0x142E3ECA8`; its slot 4 `0x141D890B0` filters body pairs through it). Pair check ID 147831 `0x141D88E60
+  (filter, infoA, infoB)`: info bit 14 set = never; either group (upper 16 bits) 0 = always; different groups →
+  `mask[layerA] >> layerB & 1` with u64 `mask[64]` at filter `+0x1A0` (layer 30 CharController has extra rules via
+  bit 15 and filter `+0x3A0`); same group → the mask, then bit 15 (both) = bone-index adjacency (bits 8–12, collide
+  unless 1 apart), or for layers 8/32/33 both a per-bone mask at filter `+0x20 + bone*4`.
 
 **Gotcha:** dynamic ragdoll bodies on layer 8 collide with the actor's own character controller; a moving
 controller climbs onto its own ragdoll and rises. Use 33 while the ragdoll is dynamic on a living actor.

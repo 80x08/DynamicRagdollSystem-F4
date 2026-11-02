@@ -300,7 +300,11 @@ namespace DynamicRagdollSystem
 	inline float kDeathKnockbackScale = 0.4f;     // fraction of a gun's death knockback kept (1 = vanilla), not explosions
 	inline float kExplosionStumbleChance = 0.0f;  // chance an explosion death still balances; otherwise it is flung
 	inline Range kExplosionPush{ 6.0f, 10.0f };    // physics units/s: blast velocity given to every body part
-	inline float kExplosionLift = 0.5f;           // upward part of the blast push, as a fraction of it
+	inline bool  kRagdollCollision = true;        // ragdolls collide with living NPCs and knock them over (else vanilla)
+	inline bool  kSelfCollision = true;           // forearms/hands of dead and knocked-down ragdolls collide with their torso
+	inline float kImpactSpeed = 5.0f;            // trunk speed at which a ragdoll knocks over a standing NPC (0 = off)
+	inline float kImpactForce = 3.0f;             // knock force given to that NPC (engine explosion knockdown magnitude)
+	inline float kExplosionLift = 0.5f;          // upward part of the blast push, as a fraction of it
 	inline Range kDeathBraking{ 2.4f, 2.7f };     // horizontal braking of the dying body while its feet are planted, 1/s
 	inline bool  kIniHotReload = false;           // [General] bEnableIniHotReload, read at game start only
 
@@ -627,6 +631,8 @@ namespace DynamicRagdollSystem
 	void ResolveImpulseFunction();
 	void SetTreeMotionType(RE::NiAVObject* a_root, RE::hknpMotionPropertiesId::Preset a_type);
 	void SetTreeCollisionLayer(RE::NiAVObject* a_root, RE::COL_LAYER a_layer);
+	void UpdateCollisionFilter();
+	void LearnArmTorsoParts(const Stumble& a_stumble, RE::hknpBSWorld* a_world);
 
 	// Reaction.cpp
 	std::uintptr_t FindRagdollDriver(RE::Actor* a_actor, std::uintptr_t* a_graph = nullptr);
@@ -642,6 +648,7 @@ namespace DynamicRagdollSystem
 	void SetAttackLock(Stumble& a_stumble, RE::Actor* a_actor, bool a_lock);
 	bool PerformDefaultAction(RE::Actor* a_actor, RE::DEFAULT_OBJECT a_action);
 	void StartBurnDown(RE::Actor* a_actor, float a_now);
+	void KnockOverStanding(RE::bhkWorld* a_world, float a_now);
 	void ReleaseAttackLocks();
 	void SetBurnParalysis(Death& a_death, RE::Actor* a_actor, bool a_lock);
 	void ReplaceDeath(Death&& a_death);

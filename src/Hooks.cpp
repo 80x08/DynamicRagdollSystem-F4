@@ -147,6 +147,8 @@ namespace DynamicRagdollSystem
 				++it;
 			}
 		}
+		UpdateCollisionFilter();
+		KnockOverStanding(a_world, now);
 	}
 
 

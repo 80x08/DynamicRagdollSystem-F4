@@ -415,6 +415,7 @@ namespace DynamicRagdollSystem
 			const auto& first = a_world->m_bodyManager.m_bodies[a_stumble.bodies.front().index];
 			REX::INFO("DynamicRagdollSystem: ragdoll body collision layer {} (filter {:08X})"sv,
 				first.m_collisionFilterInfo & 0x7F, first.m_collisionFilterInfo);
+			LearnArmTorsoParts(a_stumble, a_world);
 		}
 		REX::INFO("DynamicRagdollSystem: ragdoll map bones {} bodies {} dynamic {} joints {}"sv,
 			map.boneCount, map.bodyCount, a_stumble.bodies.size(), a_stumble.joints.size());
@@ -632,6 +633,82 @@ namespace DynamicRagdollSystem
 		using func_t = void (*)(RE::NiAVObject*, std::uint32_t);
 		static REL::Relocation<func_t> func{ REL::ID{ 715635 } };
 		func(a_root, static_cast<std::uint32_t>(a_layer));
+	}
+
+	// bhkCollisionFilter (pointer global ID 469495, 0x1458E0AD8), pair check ID 147831 (0x141D88E60): u64 collide mask
+	// per layer at +0x1A0 (bit n = collides with layer n). Two bodies of one ragdoll (same group) on layers 8/32/33
+	// also need, in the u32 per-part table at +0x20, bit partB in entry partA (part = filter info bits 8-12).
+	// bRagdollCollideWithNPCs: 8 <-> 8 and 32 <-> 8 (ragdolls vs living NPC bodies). bRagdollSelfCollision: 8 -> 8,
+	// 32 -> 32 and the forearm/hand <-> torso part pairs learnt by LearnArmTorsoParts. Recomputed from the engine's
+	// original bits every update, so either toggle can go off again (hot reload).
+	namespace
+	{
+		std::array<std::uint32_t, 32> g_learntParts{};
+	}
+
+	void UpdateCollisionFilter()
+	{
+		static bool                          saved = false;
+		static std::uint64_t                 orig8 = 0, orig32 = 0;
+		static std::array<std::uint32_t, 32> origParts{};
+		static std::uint64_t                 last8 = 0, last32 = 0;
+		static REL::Relocation<std::uintptr_t*> global{ REL::ID{ 469495 } };
+		const auto filter = *global;
+		if (!filter) return;  // not created yet: retried next update
+		auto* masks = reinterpret_cast<std::uint64_t*>(filter + 0x1A0);
+		auto* parts = reinterpret_cast<std::uint32_t*>(filter + 0x20);
+		if (!saved) {
+			saved = true;
+			orig8 = last8 = masks[8];
+			orig32 = last32 = masks[32];
+			std::copy_n(parts, 32, origParts.begin());
+		}
+		constexpr std::uint64_t kBit8 = 1ull << 8, kBit32 = 1ull << 32;
+		const std::uint64_t want8 = orig8 | (kRagdollCollision ? kBit8 | kBit32 : 0) | (kSelfCollision ? kBit8 : 0);
+		const std::uint64_t want32 = orig32 | (kRagdollCollision ? kBit8 : 0) | (kSelfCollision ? kBit32 : 0);
+		masks[8] = want8;
+		masks[32] = want32;
+		for (int i = 0; i < 32; ++i) parts[i] = origParts[i] | (kSelfCollision ? g_learntParts[i] : 0);
+		if (want8 != last8 || want32 != last32) {
+			// layer 33 (hit reactions) is not changed, but shares the part table if its mask has bit 33
+			REX::INFO("DynamicRagdollSystem: collision filter: NPC contact {} self {} (layer 8 mask {:016X} -> {:016X}, layer 32 mask {:016X} -> {:016X}, layer 33 mask {:016X})"sv,
+				kRagdollCollision, kSelfCollision, last8, want8, last32, want32, masks[33]);
+			last8 = want8;
+			last32 = want32;
+		}
+	}
+
+	// Part numbers of this ragdoll's forearms/hands (arm bodies whose parent is an arm body; not the upper arm, which
+	// sits against the shoulder) and trunk bodies; each arm/trunk pair is added to g_learntParts.
+	void LearnArmTorsoParts(const Stumble& a_stumble, RE::hknpBSWorld* a_world)
+	{
+		auto& bodies = a_world->m_bodyManager.m_bodies;
+		const auto info = [&](const BodyRef& a_b) -> std::int64_t {
+			if (a_b.index < 0 || a_b.index >= bodies.size() || bodies[a_b.index].m_id.m_value != a_b.id.m_value) return -1;
+			return bodies[a_b.index].m_collisionFilterInfo;
+		};
+		std::uint32_t added = 0;
+		for (const auto& arm : a_stumble.bodies) {
+			if (!arm.arm || std::none_of(a_stumble.bodies.begin(), a_stumble.bodies.end(),
+								[&](const BodyRef& a_p) { return a_p.arm && a_p.id.m_value == arm.parentId.m_value; })) continue;
+			const auto armInfo = info(arm);
+			if (armInfo < 0) continue;
+			for (const auto& trunk : a_stumble.bodies) {
+				if (!trunk.spine && !trunk.pelvis) continue;
+				const auto trunkInfo = info(trunk);
+				if (trunkInfo < 0) continue;
+				const auto a = static_cast<std::uint32_t>(armInfo >> 8) & 0x1F, t = static_cast<std::uint32_t>(trunkInfo >> 8) & 0x1F;
+				if (a == t) continue;
+				if (!(g_learntParts[a] & (1u << t))) ++added;
+				g_learntParts[a] |= 1u << t;
+				g_learntParts[t] |= 1u << a;
+				if (armInfo & trunkInfo & 0x8000) {  // both bit 15: the engine uses bone adjacency instead of the table
+					REX::INFO("DynamicRagdollSystem: self collision: arm/trunk bodies use adjacency rule (filter {:08X} / {:08X})"sv,
+						static_cast<std::uint32_t>(armInfo), static_cast<std::uint32_t>(trunkInfo));
+				}
+			}
+		}
+		if (added > 0) REX::INFO("DynamicRagdollSystem: self collision: {} new arm/trunk part pairs"sv, added);
 	}
 
 	// Lowest (pelvis / SPINE1) and highest (chest) trunk bodies among the samples; same if only one.

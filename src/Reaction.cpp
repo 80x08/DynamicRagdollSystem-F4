@@ -965,4 +965,73 @@ namespace DynamicRagdollSystem
 		ReplaceDeath(std::move(down));
 		REX::INFO("DynamicRagdollSystem: {:08X} burning: knockdown {}"sv, a_actor->GetFormID(), done ? "started" : "failed");
 	}
+
+	// bRagdollCollideWithNPCs: fast dead or knocked-down bodies knock over standing NPCs they run into. The bodies now
+	// collide with the NPC's limb bodies (SetRagdollNPCCollision) and stop at them, so contact is a distance test of
+	// the trunk bodies against the NPC's standing cylinder before the physics step; the victim gets the engine
+	// explosion knockdown (as StartBurnDown), pushed along the body's motion.
+	void KnockOverStanding(RE::bhkWorld* a_world, float a_now)
+	{
+		if (!kRagdollCollision || kImpactSpeed <= 0.0f) return;
+		auto* npWorld = a_world ? a_world->m_worldNP.get() : nullptr;
+		auto* lists = RE::ProcessLists::GetSingleton();
+		if (!npWorld || !lists) return;
+		constexpr float kGame = 69.99125f;  // game units per physics unit
+		constexpr float kRadius = 45.0f;    // game units: the NPC's limbs plus the trunk body's own thickness
+		constexpr float kHeight = 130.0f;   // shortcut: fixed human height, upgrade to the actor's bounds if kids/giants matter
+		static std::unordered_map<RE::TESFormID, float> knocked;  // victim -> when, so one fall knocks it once
+		struct Fast { Vec3 pos; Vec3 vel; };  // trunk body: game units, physics units/s
+		std::vector<Fast> fast;
+		std::vector<RE::TESFormID> reacting;
+		{
+			std::scoped_lock lock{ g_mutex };
+			const auto collect = [&](const Death& a_d) {
+				if (a_d.bodies.empty()) return;
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_d.formID);
+				if (!actor || GetWorld(actor) != a_world) return;
+				WorldWriteLock worldLock{ npWorld };
+				if (!worldLock.held) return;
+				auto& worldBodies = npWorld->m_bodyManager.m_bodies;
+				for (const auto& body : a_d.bodies) {
+					if (!(body.pelvis || body.spine) || body.index < 0 || body.index >= worldBodies.size() ||
+						worldBodies[body.index].m_id.m_value != body.id.m_value || a_d.Detached(body.id.m_value)) continue;
+					const auto& b = worldBodies[body.index];
+					MotionState motion{};
+					if (!b.m_flags.all(RE::hknpCollisionFlagsEnum::kIsDynamic) || !ReadMotionState(npWorld, b, motion)) continue;
+					const auto& v = motion.linear;
+					if (v.x * v.x + v.y * v.y < kImpactSpeed * kImpactSpeed) continue;
+					const auto p = BodyPosition(b);
+					fast.push_back({ { p.x * kGame, p.y * kGame, p.z * kGame }, v });
+				}
+			};
+			for (const auto& d : g_deaths) collect(d);
+			for (const auto& d : g_knockdowns) collect(d);
+			if (fast.empty()) return;
+			for (const auto& s : g_stumbles) reacting.push_back(s.formID);  // a driven reaction pins the body: skip
+		}
+		std::erase_if(knocked, [&](const auto& a_e) { return a_now - a_e.second > 3.0f; });
+		for (const auto& handle : lists->highActorHandles) {
+			const auto actor = handle.get();
+			if (!actor || actor->IsPlayerRef() || actor->IsDead(false) || actor->knockState != 0 || !actor->Get3D() ||
+				!actor->currentProcess || GetWorld(actor.get()) != a_world) continue;
+			const auto id = actor->GetFormID();
+			if (knocked.contains(id) || std::find(reacting.begin(), reacting.end(), id) != reacting.end() ||
+				!IsHumanoid(actor.get()) || InLockedAnimation(actor.get())) continue;
+			const auto pos = actor->GetPosition();
+			for (const auto& f : fast) {
+				const float dx = pos.x - f.pos.x, dy = pos.y - f.pos.y, dz = f.pos.z - pos.z;
+				// inside the cylinder and still moving towards its axis
+				if (dx * dx + dy * dy > kRadius * kRadius || dz < 0.0f || dz > kHeight || dx * f.vel.x + dy * f.vel.y <= 0.0f) continue;
+				const float speed = std::sqrt(f.vel.x * f.vel.x + f.vel.y * f.vel.y);
+				auto from = pos;
+				from.x -= f.vel.x / speed * 50.0f;
+				from.y -= f.vel.y / speed * 50.0f;
+				from.z += 50.0f;
+				actor->currentProcess->KnockExplosion(actor.get(), from, kImpactForce);
+				knocked[id] = a_now;
+				REX::INFO("DynamicRagdollSystem: {:08X} knocked over by a ragdoll at {:.1f} units/s"sv, id, speed);
+				break;
+			}
+		}
+	}
 }

@@ -155,6 +155,18 @@ fExplosionPushMin=6.0
 fExplosionPushMax=10.0
 ; Upward part of the blast, as a fraction of the push (0 = flat, 1 = as much up as away). Range 0-2.
 fExplosionLift=0.5
+; 1 = dead and knocked-down bodies collide with living NPCs instead of passing through them, and knock them over
+; when they hit them fast enough (fRagdollImpactSpeed). Also lets walking NPCs bump into corpses on the floor.
+; 0 = vanilla (no contact, no knock-over).
+bRagdollCollideWithNPCs=1
+; Dead or knocked-down bodies flying at least this fast (physics units/s; running is about 4-5) knock over
+; standing NPCs they run into. 0 = no knock-over (the collision stays). Range 0-50.
+fRagdollImpactSpeed=5.0
+; How hard the NPC that was run into is knocked over (engine knockdown force, as fBurnFallForce). Range 0-1000.
+fRagdollImpactForce=3.0
+; 1 = forearms and hands of dead and knocked-down bodies collide with their own torso, so flailing arms do not pass
+; through the body. Also makes dead bodies collide with each other. 0 = vanilla.
+bRagdollSelfCollision=1
 )INI";
 
 
@@ -272,6 +284,10 @@ fExplosionLift=0.5
 		readDeath("fDeathBrace", kDeathBrace, 0.0f, 3.0f);
 		readRange("fExplosionPush", kExplosionPush, 0.0f, 50.0f);
 		readDeath("fExplosionLift", kExplosionLift, 0.0f, 2.0f);
+		kRagdollCollision = GetPrivateProfileIntA("Death", "bRagdollCollideWithNPCs", kRagdollCollision ? 1 : 0, path) != 0;
+		kSelfCollision = GetPrivateProfileIntA("Death", "bRagdollSelfCollision", kSelfCollision ? 1 : 0, path) != 0;
+		readDeath("fRagdollImpactSpeed", kImpactSpeed, 0.0f, 50.0f);
+		readDeath("fRagdollImpactForce", kImpactForce, 0.0f, 1000.0f);
 		readDeath("fDeathStiffness", kDeathStiffness, 0.0f, 3.0f);
 		readDeath("fDeathPushScale", kDeathPushScale, 0.0f, 3.0f);
 		readDeath("fDeathCatchSpeed", kCatchSpeed, 0.0f, 20.0f);
