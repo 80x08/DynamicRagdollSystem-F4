@@ -58,5 +58,5 @@ at the end of `build.bat` to your own game folder, or remove them.
 
 ## License
 
-MIT, see `LICENSE`. The plugin is built with [CommonLibF4](https://github.com/Dear-Modding-FO4/commonlibf4), which
+GPL-3.0, see `LICENSE`. The plugin is built with [CommonLibF4](https://github.com/Dear-Modding-FO4/commonlibf4), which
 is GPL-3.0; a compiled DLL contains it and is subject to its terms.

@@ -13,6 +13,8 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 		.trampolineSize = 256,
 	});
 
+	REX::WARN("DynamicRagdollSystem by 80x08"sv);  // WARN so it shows even when the log level is Warning
+
 	LoadSettings();
 	InstallHooks();
 	if (const auto* messaging = F4SE::GetMessagingInterface()) {
