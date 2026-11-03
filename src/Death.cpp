@@ -823,6 +823,10 @@ namespace DynamicRagdollSystem
 		if (!a_death.dyingStepped) {
 			a_death.dyingStepped = true;
 			a_death.headOffBefore = headOff;
+			if (headOff) {
+				a_death.roll *= kHeadlessRollScale;
+				REX::INFO("DynamicRagdollSystem: {:08X} dying without a head: roll x{:.2f} -> {:.2f}"sv, a_death.formID, kHeadlessRollScale, a_death.roll);
+			}
 		} else if (kDyingEndOnHeadLoss && headOff && !a_death.headOffBefore) {
 			a_death.headCut = true;
 			return;

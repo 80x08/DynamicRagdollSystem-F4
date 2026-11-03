@@ -304,6 +304,7 @@ namespace DynamicRagdollSystem
 	inline float kDeathFlingDamage = 100.0f;      // killing hits with at least this damage fling the body (0 = off)
 	inline float kDyingEndDamage = 20.0f;         // damage to the corpse during the dying phase that ends it (0 = off)
 	inline bool  kDyingEndOnHeadLoss = true;      // head dismembered during the dying phase ends it
+	inline float kHeadlessRollScale = 0.5f;       // roll strength factor when the dying phase starts without a head
 	inline float kDeathKnockbackScale = 0.4f;     // fraction of a gun's death knockback kept (1 = vanilla), not explosions
 	inline float kExplosionStumbleChance = 0.0f;  // chance an explosion death still balances; otherwise it is flung
 	inline Range kExplosionPush{ 6.0f, 10.0f };    // physics units/s: blast velocity given to every body part
