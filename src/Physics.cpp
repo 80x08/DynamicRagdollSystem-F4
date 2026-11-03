@@ -404,7 +404,8 @@ namespace DynamicRagdollSystem
 			const bool hand = name.contains("Hand"sv) || name.contains("hand"sv);
 			const bool arm = hand || name.contains("Arm"sv) || name.contains("arm"sv);
 			const bool knee = name.contains("Calf"sv) || name.contains("calf"sv);
-			const BodyRef ref{ worldIndex, body.m_id, parentId, bone, parentIndex, constraintId, pelvis, spine, leg, priority, foot, side, hand, arm, knee };
+			const bool head = name.contains("Head"sv) || name.contains("HEAD"sv) || name.contains("Neck"sv) || name.contains("NECK"sv);
+			const BodyRef ref{ worldIndex, body.m_id, parentId, bone, parentIndex, constraintId, pelvis, spine, leg, priority, foot, side, hand, arm, knee, head };
 			a_stumble.bodies.push_back(ref);
 			if (constraintId >= 0 && parentIndex >= 0 && (spine || leg || arm)) {  // arms: dying twitches only
 				a_stumble.joints.push_back(ref);

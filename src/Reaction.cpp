@@ -165,6 +165,13 @@ namespace DynamicRagdollSystem
 			last.time = NowSeconds();
 			std::scoped_lock lock{ g_mutex };
 			g_lastHit[a_actor->GetFormID()] = last;
+		} else if (a_hit && a_actor && !a_actor->IsPlayerRef()) {
+			// Corpse hit: count it toward finishing off a body in the dying phase (same test as the StepDying dispatch).
+			const float now = NowSeconds();
+			std::scoped_lock lock{ g_mutex };
+			for (auto& death : g_deaths)
+				if (death.formID == a_actor->GetFormID() && (now >= death.end || (death.burnDown && !death.joints.empty())))
+					death.dyingDamage += a_hit->totalDamage;
 		}
 		if (a_hit && a_actor && !a_actor->IsPlayerRef()) LogSkipOnce(a_actor, "hit hook", "first hit seen");
 		if (a_hit) QueueReaction(a_actor, *a_hit);

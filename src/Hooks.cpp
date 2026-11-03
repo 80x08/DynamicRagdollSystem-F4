@@ -109,8 +109,11 @@ namespace DynamicRagdollSystem
 					burnDownOver = actor->IsDead(false) || (it->seenDown && actor->knockState == 0) || fireOut ||
 					               (!it->seenDown && now - it->start > 1.5f) || now - it->start > kBurnDownMax;
 				}
-				if (!actor || !actor->Get3D() || revived || burnDownOver || now >= dyingStart + it->dyingTime) {
+				const bool finishedOff = (kDyingEndDamage > 0.0f && it->dyingDamage >= kDyingEndDamage) || it->headCut;
+				if (!actor || !actor->Get3D() || revived || burnDownOver || finishedOff || now >= dyingStart + it->dyingTime) {
 					SetBurnParalysis(*it, actor, false);
+					if (finishedOff) REX::INFO("DynamicRagdollSystem: {:08X} dying phase ended: {}"sv, it->formID,
+						it->headCut ? "head dismembered"s : std::format("{:.0f} damage taken", it->dyingDamage));
 					if (it->dyingLogged) {
 						REX::INFO("DynamicRagdollSystem: {:08X} dying phase over: {} twitches, {} accepted joint impulses, {} rolls"sv,
 							it->formID, it->twitchCount, it->twitchHits, it->rollCount);

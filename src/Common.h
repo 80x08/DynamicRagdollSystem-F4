@@ -64,6 +64,7 @@ namespace DynamicRagdollSystem
 		bool           hand{ false };
 		bool           arm{ false };  // upper arm, forearm or hand
 		bool           knee{ false }; // calf body: its joint to the thigh is the knee
+		bool           head{ false }; // head or neck body
 	};
 
 	struct Stumble
@@ -193,6 +194,10 @@ namespace DynamicRagdollSystem
 		bool                    dyingLogged{ false };
 		float                   downTime{ 0.0f };    // when the body was first lying (dying clock), 0 = not yet
 		bool                    rollApplied{ false };
+		float                   dyingDamage{ 0.0f }; // damage taken during the dying phase (ends it at kDyingEndDamage)
+		bool                    dyingStepped{ false };  // StepDying has run once
+		bool                    headOffBefore{ false }; // head already dismembered when StepDying started
+		bool                    headCut{ false };       // head dismembered during StepDying: ends the dying phase
 	};
 
 	struct LastHit
@@ -297,6 +302,8 @@ namespace DynamicRagdollSystem
 	inline Range kFlailStrength{ 2.0f, 3.0f };     // limb flailing while a fast/airborne body flies, 0 = limp
 	inline float kDeathBrace = 2.5f;              // free hands reach for the ground when the body tips over (0 = off)
 	inline float kDeathFlingDamage = 100.0f;      // killing hits with at least this damage fling the body (0 = off)
+	inline float kDyingEndDamage = 20.0f;         // damage to the corpse during the dying phase that ends it (0 = off)
+	inline bool  kDyingEndOnHeadLoss = true;      // head dismembered during the dying phase ends it
 	inline float kDeathKnockbackScale = 0.4f;     // fraction of a gun's death knockback kept (1 = vanilla), not explosions
 	inline float kExplosionStumbleChance = 0.0f;  // chance an explosion death still balances; otherwise it is flung
 	inline Range kExplosionPush{ 6.0f, 10.0f };    // physics units/s: blast velocity given to every body part

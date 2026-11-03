@@ -817,6 +817,16 @@ namespace DynamicRagdollSystem
 		auto& worldBodies = npWorld->m_bodyManager.m_bodies;
 		std::vector<DeathSample> samples;
 		UpdateDetached(a_death, npWorld);
+		// Head cut off during the dying phase ends it (OnWorldUpdate erases the entry); already off at the start: carry on.
+		const bool headOff = std::any_of(a_death.bodies.begin(), a_death.bodies.end(),
+			[&](const BodyRef& a_body) { return a_body.head && a_death.Detached(a_body.id.m_value); });
+		if (!a_death.dyingStepped) {
+			a_death.dyingStepped = true;
+			a_death.headOffBefore = headOff;
+		} else if (kDyingEndOnHeadLoss && headOff && !a_death.headOffBefore) {
+			a_death.headCut = true;
+			return;
+		}
 		for (const auto& body : a_death.bodies) {
 			if (body.index < 0 || body.index >= worldBodies.size() || worldBodies[body.index].m_id.m_value != body.id.m_value) continue;
 			if (a_death.Detached(body.id.m_value)) continue;

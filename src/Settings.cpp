@@ -120,6 +120,12 @@ fDeathKnockbackScale=0.4
 ; weapon knockback, no balance help, limbs flail in the air. The knockback log line shows each kill's damage.
 ; 0 = off. Range 0-100000.
 fDeathFlingDamage=100.0
+; Damage a dying body (clutching/twitching/rolling after the stumble) takes before it goes limp at once, summed over
+; hits. 0 = off. Range 0-10000.
+fDyingEndDamage=20.0
+; 1 = a dying body goes limp at once when its head is dismembered (a head already off when the dying phase starts
+; does not count). 0 = off.
+bDyingEndOnHeadLoss=1
 ; Free hands (not the one clutching the wound) reach for the ground when the dying body tips over, like catching
 ; a fall. 0 = off. Range 0-3.
 fDeathBrace=2.5
@@ -281,6 +287,8 @@ bRagdollSelfCollision=1
 		readDeath("fExplosionStumbleChance", kExplosionStumbleChance, 0.0f, 1.0f);
 		readDeath("fDeathKnockbackScale", kDeathKnockbackScale, 0.0f, 1.0f);
 		readDeath("fDeathFlingDamage", kDeathFlingDamage, 0.0f, 100000.0f);
+		readDeath("fDyingEndDamage", kDyingEndDamage, 0.0f, 10000.0f);
+		kDyingEndOnHeadLoss = GetPrivateProfileIntA("Death", "bDyingEndOnHeadLoss", kDyingEndOnHeadLoss ? 1 : 0, path) != 0;
 		readDeath("fDeathBrace", kDeathBrace, 0.0f, 3.0f);
 		readRange("fExplosionPush", kExplosionPush, 0.0f, 50.0f);
 		readDeath("fExplosionLift", kExplosionLift, 0.0f, 2.0f);
@@ -300,8 +308,9 @@ bRagdollSelfCollision=1
 			kBurnReaction, kBurnStiffness, kBurnArmStiffness, kBurnFlail, kBurnShove, kBurnShoveMin, kBurnShoveMax, kBurnFallMin, kBurnFallMax,
 			kBurnFallForce, kBurnDownRoll, kBurnRollGapMin, kBurnRollGapMax, kBurnOutGrace, kBurnDownMax, kBurnDeathTwitchMin,
 			kBurnDeathTwitchMax, kBurnDeathRollMin, kBurnDeathRollMax, kBurnDeathTimeMin, kBurnDeathTimeMax);
-		REX::INFO("DynamicRagdollSystem: death settings: noDeathAnimation {} chances stumble {} grip {} twitch {}; stiffness {} pushScale {} catchSpeed {} catchRange {} kneeBend {}"sv,
-			kDisableDeathAnimation, kDeathStumbleChance, kDeathGripChance, kTwitchChance, kDeathStiffness, kDeathPushScale, kCatchSpeed, kCatchRange, kDeathKneeBend);
+		REX::INFO("DynamicRagdollSystem: death settings: noDeathAnimation {} chances stumble {} grip {} twitch {}; stiffness {} pushScale {} catchSpeed {} catchRange {} kneeBend {}; dying ends at {} damage, on head loss {}"sv,
+			kDisableDeathAnimation, kDeathStumbleChance, kDeathGripChance, kTwitchChance, kDeathStiffness, kDeathPushScale, kCatchSpeed, kCatchRange, kDeathKneeBend,
+			kDyingEndDamage, kDyingEndOnHeadLoss);
 		REX::INFO("DynamicRagdollSystem: death ranges: time {}-{} support {}-{} upright {}-{} dying {}-{} twitch {}-{} roll {}-{} braking {}-{}"sv,
 			kDeathStumbleTime.min, kDeathStumbleTime.max, kDeathSupport.min, kDeathSupport.max, kDeathUpright.min, kDeathUpright.max,
 			kDyingTime.min, kDyingTime.max, kTwitchStrength.min, kTwitchStrength.max, kRollStrength.min, kRollStrength.max,
