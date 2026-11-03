@@ -61,31 +61,83 @@ namespace DynamicRagdollSystem
 
 	// Furniture, sitting/sleeping, sync anims (kill moves, paired anims) and interactions: the animation is locked
 	// there, and the engine snaps these actors out of any ragdoll. Neither reactions nor death handling touch them.
-	bool InLockedAnimation(RE::Actor* a_actor)
+	// The engine's own check (as 0x1408113D0 does): is the actor in a running sync instance? The sync manager
+	// (0x1459D7608) holds instance pointers at +0x18, count at +0x28; 0x14080CE90(instance, &handle, false) is a
+	// read-only lookup under the instance lock.
+	bool InRunningSync(RE::Actor* a_actor)
+	{
+		static REL::Relocation<std::uintptr_t*> manager{ REL::ID{ 1346879 } };
+		using isIn_t = bool (*)(std::uintptr_t, const std::uint32_t*, bool);
+		static REL::Relocation<isIn_t> isIn{ REL::ID{ 1291193 } };
+		const auto mgr = *manager.get();
+		std::uintptr_t list = 0;
+		std::uint32_t count = 0;
+		if (!mgr || !ReadField(mgr, 0x18, list) || !ReadField(mgr, 0x28, count)) return true;  // unreadable: stay safe
+		if (count > 256) return true;
+		const std::uint32_t handle = a_actor->GetHandle().get_handle();
+		for (std::uint32_t i = 0; i < count; ++i) {
+			std::uintptr_t instance = 0;
+			if (ReadField(list, i * sizeof(instance), instance) && instance && isIn(instance, &handle, false)) return true;
+		}
+		return false;
+	}
+
+	// Which locked state the actor is in, or nullptr if none.
+	const char* LockedReason(RE::Actor* a_actor)
 	{
 		const auto* process = a_actor->currentProcess;
-		return (process && process->middleHigh && process->middleHigh->occupiedFurniture.get()) ||
-		       a_actor->DoGetSitSleepState() != RE::SIT_SLEEP_STATE::kNormal || a_actor->inSyncAnim ||
-		       a_actor->interactingState != static_cast<RE::INTERACTING_STATE>(0) ||
-		       a_actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kIsInKillMove);
+		if (process && process->middleHigh && process->middleHigh->occupiedFurniture.get()) return "occupied furniture handle set";
+		if (a_actor->DoGetSitSleepState() != RE::SIT_SLEEP_STATE::kNormal) return "sit/sleep state";
+		// The sync-anim bit can stay set after a paired animation ends uncleanly (seen on fresh placeatme spawns),
+		// so it only counts if the engine's sync manager confirms a running sync for the actor.
+		if (a_actor->inSyncAnim) {
+			if (InRunningSync(a_actor)) return "in sync anim";
+			LogSkipOnce(a_actor, "sync flag", "set but no running sync; ignored");
+		}
+		if (a_actor->interactingState != static_cast<RE::INTERACTING_STATE>(0)) return "interacting state";
+		if (a_actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kIsInKillMove)) return "kill move flag";
+		return nullptr;
+	}
+
+	bool InLockedAnimation(RE::Actor* a_actor) { return LockedReason(a_actor) != nullptr; }
+
+	// Diagnostic: why an NPC got no reaction, logged once per actor and reason (silent gates otherwise).
+	void LogSkipOnce(RE::Actor* a_actor, std::string_view a_where, std::string_view a_why)
+	{
+		static std::mutex mutex;
+		static std::unordered_set<std::string> logged;
+		auto line = std::format("{:08X} {}: {}", a_actor->GetFormID(), a_where, a_why);
+		std::scoped_lock lock{ mutex };
+		if (logged.insert(line).second) REX::INFO("DynamicRagdollSystem: {}"sv, line);
 	}
 
 	// Called for every hit before the engine applies it (DoHitMe). Returns true if a reaction was queued.
 	bool QueueReaction(RE::Actor* a_actor, const RE::HitData& a_hit)
 	{
-		if (!a_actor || a_actor->IsPlayerRef() ||
-			a_actor->lifeState != static_cast<std::uint32_t>(RE::ACTOR_LIFE_STATE::kAlive) ||
-			a_actor->IsDead(false) || a_hit.flags.any(RE::HitData::Flag::kFatal) ||
+		if (!a_actor || a_actor->IsPlayerRef() || a_actor->IsDead(false) || a_hit.flags.any(RE::HitData::Flag::kFatal) ||
 			a_hit.totalDamage < kMinDamage) {
 			return false;
 		}
+		if (a_actor->lifeState != static_cast<std::uint32_t>(RE::ACTOR_LIFE_STATE::kAlive)) {
+			LogSkipOnce(a_actor, "hit skipped", std::format("life state {}", static_cast<std::uint32_t>(a_actor->lifeState)));
+			return false;
+		}
 		if (!a_actor->currentProcess || !a_actor->currentProcess->middleHigh) {
+			LogSkipOnce(a_actor, "hit skipped", "no middle-high process");
 			return false;
 		}
-		if (a_actor->knockState != 0 || !GetWorld(a_actor)) {
+		if (a_actor->knockState != 0) {
+			LogSkipOnce(a_actor, "hit skipped", std::format("knock state {}", static_cast<std::uint32_t>(a_actor->knockState)));
 			return false;
 		}
-		if (InLockedAnimation(a_actor)) return false;
+		if (!GetWorld(a_actor)) {
+			LogSkipOnce(a_actor, "hit skipped", "no physics world");
+			return false;
+		}
+		if (const auto why = LockedReason(a_actor)) {
+			LogSkipOnce(a_actor, "hit skipped", why);
+			return false;
+		}
 
 		const float now = NowSeconds();
 		std::scoped_lock lock{ g_mutex };
@@ -114,6 +166,7 @@ namespace DynamicRagdollSystem
 			std::scoped_lock lock{ g_mutex };
 			g_lastHit[a_actor->GetFormID()] = last;
 		}
+		if (a_hit && a_actor && !a_actor->IsPlayerRef()) LogSkipOnce(a_actor, "hit hook", "first hit seen");
 		if (a_hit) QueueReaction(a_actor, *a_hit);
 		g_doHitMe(a_actor, a_hit);
 	}

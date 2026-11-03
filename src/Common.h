@@ -638,6 +638,8 @@ namespace DynamicRagdollSystem
 	std::uintptr_t FindRagdollDriver(RE::Actor* a_actor, std::uintptr_t* a_graph = nullptr);
 	void ReadHitInfo(RE::Actor* a_actor, const RE::HitData& a_hit, Vec3& a_dir, std::uint32_t& a_hitBody);
 	bool InLockedAnimation(RE::Actor* a_actor);
+	const char* LockedReason(RE::Actor* a_actor);
+	void LogSkipOnce(RE::Actor* a_actor, std::string_view a_where, std::string_view a_why);
 	bool IsBurning(RE::Actor* a_actor, std::string* a_why = nullptr);  // a_why: which effect matched, for the log
 	bool IsHumanoid(RE::Actor* a_actor);
 	void ScanForBurning(float a_now);
