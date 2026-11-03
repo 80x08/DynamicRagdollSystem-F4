@@ -176,6 +176,27 @@ namespace DynamicRagdollSystem
 		if (a_hit && a_actor && !a_actor->IsPlayerRef()) LogSkipOnce(a_actor, "hit hook", "first hit seen");
 		if (a_hit) QueueReaction(a_actor, *a_hit);
 		g_doHitMe(a_actor, a_hit);
+		if (a_hit && a_actor) {  // diagnostic: the killing hit's final flags/limb are logged when its death starts
+			std::scoped_lock lock{ g_mutex };
+			if (const auto it = g_lastHit.find(a_actor->GetFormID()); it != g_lastHit.end()) {
+				it->second.flags = a_hit->flags.underlying();
+				it->second.limb = static_cast<std::int32_t>(a_hit->damageLimb.get());
+			}
+		}
+		// Head dismembered/exploded by this hit (flags read after the engine applied it).
+		using Limb = RE::BGSBodyPartDefs::LIMB_ENUM;
+		if (a_hit && a_actor && !a_actor->IsPlayerRef() &&
+			a_hit->flags.any(RE::HitData::Flag::kDismemberLimb, RE::HitData::Flag::kExplodeLimb)) {
+			const auto limb = a_hit->damageLimb.get();
+			REX::INFO("DynamicRagdollSystem: {:08X} hit {} limb {}"sv, a_actor->GetFormID(),
+				a_hit->flags.any(RE::HitData::Flag::kExplodeLimb) ? "explodes" : "dismembers", static_cast<std::int32_t>(limb));
+			if (limb == Limb::kHead1 || limb == Limb::kHead2 || limb == Limb::kEye1 || limb == Limb::kBrain) {
+				std::scoped_lock lock{ g_mutex };
+				if (g_headless.insert(a_actor->GetFormID()).second)
+					REX::INFO("DynamicRagdollSystem: {:08X} head {} by a hit"sv, a_actor->GetFormID(),
+						a_hit->flags.any(RE::HitData::Flag::kExplodeLimb) ? "exploded" : "dismembered");
+			}
+		}
 	}
 
 

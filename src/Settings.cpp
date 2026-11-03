@@ -70,6 +70,8 @@ fBurnDownRoll=1.2
 ; Seconds between those rolls, picked at random in this range. Range 0.1-30.
 fBurnDownRollIntervalMin=0.4
 fBurnDownRollIntervalMax=0.8
+; Seconds after a burning body (knocked down, or burned to death) is down before it starts rolling. Range 0-10.
+fBurnRollDelay=0.0
 ; Seconds without fire before it may get up (fire effects can drop out for a moment between hits). Range 0-10.
 fBurnOutGrace=1.0
 ; Longest it is kept on the ground, even if it keeps burning (fire hazards). Range 1-600.
@@ -147,6 +149,8 @@ fTwitchStrengthMax=2.5
 ; Strength of the dying rolls (the body turning onto its side/back). Range 0-3.
 fRollStrengthMin=0.5
 fRollStrengthMax=1.5
+; Seconds after the body is down before its twitches and rolls start. Range 0-10.
+fTwitchDelay=0.0
 ; How quickly a dying body that is still on its feet loses its momentum (higher = stops sooner, lower = glides
 ; further). Range 0-20.
 fDeathBrakingMin=2.4
@@ -170,12 +174,67 @@ fExplosionLift=0.5
 bRagdollCollideWithNPCs=1
 ; Dead or knocked-down bodies flying at least this fast (physics units/s; running is about 4-5) knock over
 ; standing NPCs they run into. 0 = no knock-over (the collision stays). Range 0-50.
-fRagdollImpactSpeed=5.0
+fRagdollImpactSpeed=1.0
 ; How hard the NPC that was run into is knocked over (engine knockdown force, as fBurnFallForce). Range 0-1000.
 fRagdollImpactForce=3.0
 ; 1 = forearms and hands of dead and knocked-down bodies collide with their own torso, so flailing arms do not pass
 ; through the body. Also makes dead bodies collide with each other. 0 = vanilla.
 bRagdollSelfCollision=1
+
+[Crawl]
+; Dying bodies lying face down may crawl instead of twitching. Before 0.4.111 these keys were in [Death]; they
+; are still read there ([Crawl] wins).
+; Chance a dying body crawls instead of twitching and rolling, if it lies face down when the dying phase starts
+; (otherwise fTwitchChance decides as usual). Never after a head shot or for burned deaths. Lasts fCrawlTime;
+; fDyingEndDamage and bDyingEndOnHeadLoss end it early too. Range 0-1.
+fCrawlChance=0.5
+; Forward speed the crawl reaches during each pull (physics units/s; running is about 4-5). Range 0-5.
+fCrawlSpeed=0.7
+; Seconds for one reach-and-pull of an arm (the arms alternate, half of it apart). Lower = faster crawl. Range 0.4-5.
+fCrawlInterval=2.4
+; Seconds after the body is down (and turned face down) before the crawl starts. Range 0-10.
+fCrawlDelay=3.0
+; Seconds the crawl lasts from its start (after fCrawlDelay), fading out; picked at random in this range. Used
+; instead of fDyingTime for crawling bodies. Range 0.5-60.
+fCrawlTimeMin=10.0
+fCrawlTimeMax=20.0
+; Body push: peak forward speed is fCrawlSpeed; this caps how fast it gets there (units/s^2; the dragged limbs add
+; friction, so too low and the body does not move). Range 0-200.
+fCrawlPushAccel=40.0
+; Where the hand reaches to, from the chest: ahead, out to the side, and lifted above it (physics units, ~70 game
+; units each). Further out reads as more outstretched but stalls more at the shoulder. Ranges 0-1.5, 0-1, 0-0.5.
+fCrawlReach=0.75
+fCrawlSide=0.28
+fCrawlLift=0.1
+; Elbow target, as the fraction of the way from the shoulder to the hand target (0.5 = bent, higher = straighter
+; arm). Range 0-1.
+fCrawlElbow=0.6
+; Strength of the arm's reach and plant (1 = default). Range 0-5.
+fCrawlArmStrength=1.0
+; A hand or elbow higher than this above the chest is left to drop that frame instead of being driven (stops an
+; arm locking up over the back). Range 0-2.
+fCrawlArmMaxHeight=0.25
+; Seconds a reaching hand may stop getting closer (a joint limit, another body in the way) before that arm goes limp
+; for the rest of the reach. Range 0.05-2.
+fCrawlStallTime=0.25
+; A hand must plant at least this far ahead of the chest to pull (physics units). Range 0-1.
+fCrawlMinPlant=0.15
+; Ankle bend (toes tuck under) with each pull, rad/s^2. 0 = off. Range 0-2000.
+fCrawlAnkleBend=150.0
+; Legs move with the opposite arm: thigh swings out along the ground and the knee bends while that arm reaches, and
+; straighten while it pulls. Peak joint speeds in rad/s (angle is about speed x fCrawlInterval / 3.14). 0 = off.
+; Range 0-20.
+fCrawlHipSpeed=3.0
+fCrawlKneeSpeed=4.0
+; Head turns toward the reaching arm and lifts with each pull, in radians (0.5 = ~29 degrees). 0 = off. Range 0-1.5.
+fCrawlHeadTurn=0.8
+fCrawlHeadLift=0.6
+; How hard legs, head and ankles may be pushed to follow that motion: acceleration cap (rad/s^2) and joint push cap.
+; Raise if they barely move. Ranges 0-2000, 0-5000.
+fCrawlLimbAccel=120.0
+fCrawlLimbTorque=600.0
+; Seconds into the dying phase to get face down (a body on its side is rolled over), else no crawl. Range 0-10.
+fCrawlTurnTime=3.0
 )INI";
 
 
@@ -252,6 +311,7 @@ bRagdollSelfCollision=1
 			if (kBurnDeathTimeMax < kBurnDeathTimeMin) std::swap(kBurnDeathTimeMin, kBurnDeathTimeMax);
 			if (kBurnFallMax < kBurnFallMin) std::swap(kBurnFallMin, kBurnFallMax);
 			readBurn("fBurnDownRoll", kBurnDownRoll, 0.0f, 3.0f);
+			readBurn("fBurnRollDelay", kBurnRollDelay, 0.0f, 10.0f);
 			readBurn("fBurnDownRollIntervalMin", kBurnRollGapMin, 0.1f, 30.0f);
 			readBurn("fBurnDownRollIntervalMax", kBurnRollGapMax, 0.1f, 30.0f);
 			if (kBurnRollGapMax < kBurnRollGapMin) std::swap(kBurnRollGapMin, kBurnRollGapMax);
@@ -260,21 +320,34 @@ bRagdollSelfCollision=1
 		}
 		kBlendOut = std::min(kBlendOut, kReactionTime);
 		kDisableDeathAnimation = GetPrivateProfileIntA("Death", "bDisableDeathAnimation", kDisableDeathAnimation ? 1 : 0, path) != 0;
-		const auto readDeath = [&](const std::string& a_key, float& a_value, float a_min, float a_max) {
+		// Returns whether the key was there (and parsed).
+		const auto readIn = [&](const char* a_section, const std::string& a_key, float& a_value, float a_min, float a_max) {
 			char buffer[64]{};
-			GetPrivateProfileStringA("Death", a_key.c_str(), "", buffer, sizeof(buffer), path);
+			GetPrivateProfileStringA(a_section, a_key.c_str(), "", buffer, sizeof(buffer), path);
 			char* end = nullptr;
 			const float parsed = std::strtof(buffer, &end);
-			if (end != buffer && std::isfinite(parsed)) a_value = std::clamp(parsed, a_min, a_max);
+			if (end == buffer || !std::isfinite(parsed)) return false;
+			a_value = std::clamp(parsed, a_min, a_max);
+			return true;
 		};
-		// Ranges: fXMin/fXMax; an old single fX key sets both, so older INIs keep working.
-		const auto readRange = [&](const std::string& a_key, Range& a_range, float a_min, float a_max) {
+		const auto readDeath = [&](const std::string& a_key, float& a_value, float a_min, float a_max) {
+			return readIn("Death", a_key, a_value, a_min, a_max);
+		};
+		// [Crawl] keys; also accepted in [Death], where they were before 0.4.111 ([Crawl] wins).
+		const auto readCrawl = [&](const std::string& a_key, float& a_value, float a_min, float a_max) {
+			const bool old = readIn("Death", a_key, a_value, a_min, a_max);
+			return readIn("Crawl", a_key, a_value, a_min, a_max) || old;
+		};
+		// Ranges: fXMin/fXMax; an old single fX key sets both, so older INIs keep working. Missing keys keep the defaults.
+		const auto readRangeWith = [&](auto a_read, const std::string& a_key, Range& a_range, float a_min, float a_max) {
 			float single = a_range.min;
-			readDeath(a_key, single, a_min, a_max);
-			a_range = { single, single };
-			readDeath(a_key + "Min", a_range.min, a_min, a_max);
-			readDeath(a_key + "Max", a_range.max, a_min, a_max);
+			if (a_read(a_key, single, a_min, a_max)) a_range = { single, single };
+			a_read(a_key + "Min", a_range.min, a_min, a_max);
+			a_read(a_key + "Max", a_range.max, a_min, a_max);
 			if (a_range.max < a_range.min) std::swap(a_range.min, a_range.max);
+		};
+		const auto readRange = [&](const std::string& a_key, Range& a_range, float a_min, float a_max) {
+			readRangeWith(readDeath, a_key, a_range, a_min, a_max);
 		};
 		readDeath("fDeathStumbleChance", kDeathStumbleChance, 0.0f, 1.0f);
 		readDeath("fDeathGripChance", kDeathGripChance, 0.0f, 1.0f);
@@ -293,6 +366,29 @@ bRagdollSelfCollision=1
 		readDeath("fDyingEndDamage", kDyingEndDamage, 0.0f, 10000.0f);
 		kDyingEndOnHeadLoss = GetPrivateProfileIntA("Death", "bDyingEndOnHeadLoss", kDyingEndOnHeadLoss ? 1 : 0, path) != 0;
 		readDeath("fHeadlessRollScale", kHeadlessRollScale, 0.0f, 1.0f);
+		readCrawl("fCrawlChance", kCrawlChance, 0.0f, 1.0f);
+		readCrawl("fCrawlSpeed", kCrawlSpeed, 0.0f, 5.0f);
+		readCrawl("fCrawlInterval", kCrawlInterval, 0.4f, 5.0f);
+		readCrawl("fCrawlDelay", kCrawlDelay, 0.0f, 10.0f);
+		readRangeWith(readCrawl, "fCrawlTime", kCrawlTime, 0.5f, 60.0f);
+		readCrawl("fCrawlPushAccel", kCrawlAccel, 0.0f, 200.0f);
+		readCrawl("fCrawlReach", kCrawlReach, 0.0f, 1.5f);
+		readCrawl("fCrawlSide", kCrawlSide, 0.0f, 1.0f);
+		readCrawl("fCrawlLift", kCrawlLift, 0.0f, 0.5f);
+		readCrawl("fCrawlElbow", kCrawlElbow, 0.0f, 1.0f);
+		readCrawl("fCrawlArmStrength", kCrawlArmStrength, 0.0f, 5.0f);
+		readCrawl("fCrawlArmMaxHeight", kCrawlArmMaxHeight, 0.0f, 2.0f);
+		readCrawl("fCrawlStallTime", kCrawlStall, 0.05f, 2.0f);
+		readCrawl("fCrawlMinPlant", kCrawlMinPlant, 0.0f, 1.0f);
+		readCrawl("fCrawlAnkleBend", kCrawlAnkleAccel, 0.0f, 2000.0f);
+		readCrawl("fCrawlHipSpeed", kCrawlHipSpeed, 0.0f, 20.0f);
+		readCrawl("fCrawlKneeSpeed", kCrawlKneeSpeed, 0.0f, 20.0f);
+		readCrawl("fCrawlHeadTurn", kCrawlHeadTurn, 0.0f, 1.5f);
+		readCrawl("fCrawlHeadLift", kCrawlHeadLift, 0.0f, 1.5f);
+		readCrawl("fCrawlLimbAccel", kCrawlLimbAccel, 0.0f, 2000.0f);
+		readCrawl("fCrawlLimbTorque", kCrawlLimbMaxTorque, 0.0f, 5000.0f);
+		readCrawl("fCrawlTurnTime", kCrawlTurnTime, 0.0f, 10.0f);
+		readDeath("fTwitchDelay", kTwitchDelay, 0.0f, 10.0f);
 		readDeath("fDeathBrace", kDeathBrace, 0.0f, 3.0f);
 		readRange("fExplosionPush", kExplosionPush, 0.0f, 50.0f);
 		readDeath("fExplosionLift", kExplosionLift, 0.0f, 2.0f);
@@ -312,9 +408,12 @@ bRagdollSelfCollision=1
 			kBurnReaction, kBurnStiffness, kBurnArmStiffness, kBurnFlail, kBurnShove, kBurnShoveMin, kBurnShoveMax, kBurnFallMin, kBurnFallMax,
 			kBurnFallForce, kBurnDownRoll, kBurnRollGapMin, kBurnRollGapMax, kBurnOutGrace, kBurnDownMax, kBurnDeathTwitchMin,
 			kBurnDeathTwitchMax, kBurnDeathRollMin, kBurnDeathRollMax, kBurnDeathTimeMin, kBurnDeathTimeMax);
-		REX::INFO("DynamicRagdollSystem: death settings: noDeathAnimation {} chances stumble {} grip {} twitch {}; stiffness {} pushScale {} catchSpeed {} catchRange {} kneeBend {}; dying ends at {} damage, on head loss {}, headless roll x{}"sv,
+		REX::INFO("DynamicRagdollSystem: death settings: noDeathAnimation {} chances stumble {} grip {} twitch {}; stiffness {} pushScale {} catchSpeed {} catchRange {} kneeBend {}; dying ends at {} damage, on head loss {}, headless roll x{}; crawl chance {} speed {} interval {} delay {} time {}-{}; twitch delay {} burn roll delay {}"sv,
 			kDisableDeathAnimation, kDeathStumbleChance, kDeathGripChance, kTwitchChance, kDeathStiffness, kDeathPushScale, kCatchSpeed, kCatchRange, kDeathKneeBend,
-			kDyingEndDamage, kDyingEndOnHeadLoss, kHeadlessRollScale);
+			kDyingEndDamage, kDyingEndOnHeadLoss, kHeadlessRollScale, kCrawlChance, kCrawlSpeed, kCrawlInterval, kCrawlDelay, kCrawlTime.min, kCrawlTime.max, kTwitchDelay, kBurnRollDelay);
+		REX::INFO("DynamicRagdollSystem: crawl tuning: pushAccel {} reach {} side {} lift {} elbow {} arm {} maxHeight {} stall {} minPlant {} ankle {} hip {} knee {} headTurn {} headLift {} limbAccel {} limbTorque {} turnTime {}"sv,
+			kCrawlAccel, kCrawlReach, kCrawlSide, kCrawlLift, kCrawlElbow, kCrawlArmStrength, kCrawlArmMaxHeight, kCrawlStall, kCrawlMinPlant,
+			kCrawlAnkleAccel, kCrawlHipSpeed, kCrawlKneeSpeed, kCrawlHeadTurn, kCrawlHeadLift, kCrawlLimbAccel, kCrawlLimbMaxTorque, kCrawlTurnTime);
 		REX::INFO("DynamicRagdollSystem: death ranges: time {}-{} support {}-{} upright {}-{} dying {}-{} twitch {}-{} roll {}-{} braking {}-{}"sv,
 			kDeathStumbleTime.min, kDeathStumbleTime.max, kDeathSupport.min, kDeathSupport.max, kDeathUpright.min, kDeathUpright.max,
 			kDyingTime.min, kDyingTime.max, kTwitchStrength.min, kTwitchStrength.max, kRollStrength.min, kRollStrength.max,

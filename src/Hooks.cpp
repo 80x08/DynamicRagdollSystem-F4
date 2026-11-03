@@ -115,8 +115,8 @@ namespace DynamicRagdollSystem
 					if (finishedOff) REX::INFO("DynamicRagdollSystem: {:08X} dying phase ended: {}"sv, it->formID,
 						it->headCut ? "head dismembered"s : std::format("{:.0f} damage taken", it->dyingDamage));
 					if (it->dyingLogged) {
-						REX::INFO("DynamicRagdollSystem: {:08X} dying phase over: {} twitches, {} accepted joint impulses, {} rolls"sv,
-							it->formID, it->twitchCount, it->twitchHits, it->rollCount);
+						REX::INFO("DynamicRagdollSystem: {:08X} dying phase over: {} twitches, {} accepted joint impulses, {} rolls, {} crawl pulls"sv,
+							it->formID, it->twitchCount, it->twitchHits, it->rollCount, it->crawlPulls);
 					}
 					it = g_deaths.erase(it);
 					continue;
@@ -128,6 +128,7 @@ namespace DynamicRagdollSystem
 						StepDeath(*it, actor, now);
 					} else {
 						if (it->downTime <= 0.0f) UpdateGround(*it, actor, a_world);  // the brace needs the ground while it falls
+						else if (it->crawlRolled && !it->crawlDecided && !it->headOffBefore && !it->headShotKill) CastCrawlRay(*it, actor, a_world);  // face-down check
 						StepDying(*it, actor, now);
 					}
 				}
@@ -170,6 +171,7 @@ namespace DynamicRagdollSystem
 			g_lastTrigger.clear();
 			g_deathMoveVel.clear();
 			g_burningDeaths.clear();
+			g_headless.clear();
 		}
 		std::scoped_lock lock{ g_driveMutex };
 		g_drives.clear();

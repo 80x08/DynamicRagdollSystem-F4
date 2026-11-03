@@ -198,6 +198,25 @@ namespace DynamicRagdollSystem
 		bool                    dyingStepped{ false };  // StepDying has run once
 		bool                    headOffBefore{ false }; // head already dismembered when StepDying started
 		bool                    headCut{ false };       // head dismembered during StepDying: ends the dying phase
+		bool                    crawlRolled{ false };   // fCrawlChance hit; crawls if it lies face down when the dying phase starts
+		bool                    crawling{ false };      // dying phase is a crawl instead of twitches/rolls
+		bool                    crawlDecided{ false };  // the face-down check is done (crawling or not)
+		bool                    crawlRayValid{ false }; // CastCrawlRay result for this frame:
+		Vec3                    crawlFront{};           // ... the body's front direction
+		float                   crawlRayDist{ 0.0f };   // ... distance from the stomach to the ground along it (1e9 = no hit)
+		std::uint32_t           crawlTurns{ 0 };        // diagnostics: rolls toward face down
+		float                   crawlStart{ 0.0f };     // crawl motion starts (decision, or fCrawlDelay after down if later)
+		float                   crawlTime{ 0.0f };      // ... and lasts this long (fCrawlTime)
+		std::uint32_t           crawlLimbTries{ 0 };    // diagnostics since the last pull log: leg/head joint pushes tried ...
+		std::uint32_t           crawlLimbHits{ 0 };     // ... and accepted
+		bool                    headShotKill{ false };  // killing hit was to the head: no crawl (the game may take the head off later)
+		bool                    crawlPlanted[2]{};      // per arm (L, R): hand planted for the current pull
+		Vec3                    crawlPlant[2]{};        // ... where it was planted
+		bool                    crawlPulling[2]{};      // ... planted ahead of the chest: this pull holds the hand and nudges
+		float                   crawlBest[2]{};         // ... closest the hand got to its reach target this reach (0 = new reach)
+		float                   crawlBestTime[2]{};     // ... when
+		bool                    crawlStalled[2]{};      // ... stopped getting closer (joint limit): arm limp for the rest of the reach
+		std::uint32_t           crawlPulls{ 0 };        // diagnostics: arm pulls started
 	};
 
 	struct LastHit
@@ -208,6 +227,8 @@ namespace DynamicRagdollSystem
 		Vec3          dir{};
 		std::uint32_t hitBody{ 0x7FFFFFFF };
 		float         time{ -100.0f };
+		std::uint32_t flags{ 0 };     // HitData flags after the engine applied the hit (diagnostic)
+		std::int32_t  limb{ -1 };     // HitData damageLimb (diagnostic)
 	};
 
 	struct Pending
@@ -296,6 +317,7 @@ namespace DynamicRagdollSystem
 	inline float kCatchSpeed = 4.0f;             // physics units/s: below this the dying body gets full help (running ≈ 4–5)
 	inline float kCatchRange = 6.0f;             // ... fading to no help at kCatchSpeed + kCatchRange
 	inline Range kDyingTime{ 3.0f, 15.0f };        // after the stumble: seconds of clutching/twitching before fully limp
+	inline Range kCrawlTime{ 10.0f, 20.0f };        // seconds a crawl lasts from its start (after fCrawlDelay), fading out
 	inline Range kTwitchStrength{ 1.0f, 2.5f };   // scales the dying twitches
 	inline Range kRollStrength{ 0.5f, 1.5f };     // scales the dying rolls
 	inline float kDeathKneeBend = 80.0f;         // degrees the knees fold by the end of the stumble
@@ -305,12 +327,43 @@ namespace DynamicRagdollSystem
 	inline float kDyingEndDamage = 20.0f;         // damage to the corpse during the dying phase that ends it (0 = off)
 	inline bool  kDyingEndOnHeadLoss = true;      // head dismembered during the dying phase ends it
 	inline float kHeadlessRollScale = 0.5f;       // roll strength factor when the dying phase starts without a head
+	inline float kCrawlChance = 0.5f;             // chance a body lying face down crawls instead of twitching (wins over kTwitchChance)
+	inline float kCrawlInterval = 2.4f;           // s: one reach + pull of an arm; the arms are half of it apart
+	inline float kCrawlSpeed = 0.7f;              // peak forward speed of the body nudge while an arm pulls, physics units/s
+	inline float kCrawlAccel = 40.0f;             // cap on the body nudge, units/s^2 (the dragged legs and arms add friction)
+	inline float kCrawlDelay = 3.0f;              // s after the body is down (and turned face down) before the crawl starts
+	inline float kCrawlReach = 0.75f;             // hand target ahead of the chest along the crawl direction
+	inline float kCrawlSide = 0.28f;              // ... and out to its side
+	inline float kCrawlLift = 0.1f;               // ... and above the chest centre while it reaches (elbow too)
+	inline float kCrawlElbow = 0.6f;              // elbow target this far from the shoulder to the hand target (straighter past 0.5)
+	inline float kCrawlArmStrength = 1.0f;        // scales the arm's reach/plant spring (brace gains)
+	inline float kCrawlArmMaxHeight = 0.25f;      // hand or elbow higher than this above the chest: arm left to drop that frame
+	inline float kCrawlStall = 0.25f;             // s a reaching hand may go without getting kCrawlStallGain closer before going limp
+	inline float kCrawlMinPlant = 0.15f;          // hand must plant at least this far ahead of the chest to pull
+	inline float kCrawlAnkleAccel = 150.0f;       // rad/s^2 ankle bend (toes tuck under) at the peak of a pull
+	// Legs (with the opposite arm): while it reaches the thigh swings out along the ground and the knee bends, while it
+	// pulls they straighten back. Peak joint speeds, rad/s (angle ≈ speed × fCrawlInterval / π).
+	inline float kCrawlHipSpeed = 3.0f;
+	inline float kCrawlKneeSpeed = 4.0f;
+	// Head: turns toward the reaching arm and lifts with each pull; amplitudes in rad.
+	inline float kCrawlHeadTurn = 0.8f;
+	inline float kCrawlHeadLift = 0.6f;
+	inline float kCrawlLimbAccel = 120.0f;        // rad/s^2 cap on matching the leg/head speeds
+	inline float kCrawlLimbMaxTorque = 600.0f;    // ... and on the joint push (ankles too)
+	inline float kCrawlTurnTime = 3.0f;           // s into the dying phase to get face down (side bodies are rolled), else no crawl
+	inline float kTwitchDelay = 0.0f;             // s after the body is down before twitches and rolls start
+	inline float kBurnRollDelay = 0.0f;           // s after a burning (knocked-down or burned-to-death) body is down before it rolls
+	constexpr float kCrawlShoulder = 0.1f;        // shoulder estimate ahead of the chest centre
+	constexpr float kCrawlStallGain = 0.02f;      // closer than this counts as progress for kCrawlStall
+	constexpr float kCrawlRayLength = 1.0f;       // face-down ray from the stomach along the body's front ...
+	constexpr float kCrawlDownDist = 0.4f;        // ... hitting the ground closer than this = face down
+	constexpr float kCrawlSettle = 0.5f;          // s after a turn-over roll before the ray is trusted again
 	inline float kDeathKnockbackScale = 0.4f;     // fraction of a gun's death knockback kept (1 = vanilla), not explosions
 	inline float kExplosionStumbleChance = 0.0f;  // chance an explosion death still balances; otherwise it is flung
 	inline Range kExplosionPush{ 6.0f, 10.0f };    // physics units/s: blast velocity given to every body part
 	inline bool  kRagdollCollision = true;        // ragdolls collide with living NPCs and knock them over (else vanilla)
 	inline bool  kSelfCollision = true;           // forearms/hands of dead and knocked-down ragdolls collide with their torso
-	inline float kImpactSpeed = 5.0f;            // trunk speed at which a ragdoll knocks over a standing NPC (0 = off)
+	inline float kImpactSpeed = 1.0f;            // trunk speed at which a ragdoll knocks over a standing NPC (0 = off)
 	inline float kImpactForce = 3.0f;             // knock force given to that NPC (engine explosion knockdown magnitude)
 	inline float kExplosionLift = 0.5f;          // upward part of the blast push, as a fraction of it
 	inline Range kDeathBraking{ 2.4f, 2.7f };     // horizontal braking of the dying body while its feet are planted, 1/s
@@ -376,7 +429,6 @@ namespace DynamicRagdollSystem
 	constexpr float kTwitchMinScale = 0.25f;   // lightest limb twitches at this fraction of the heaviest
 	constexpr float kTwitchBurst = 0.15f;      // s: a spasm lasts this long, so joint friction cannot eat it
 	constexpr float kTwitchMaxTorque = 300.0f; // per twitch strength unit
-	constexpr float kFirstRollDelay = 0.8f;    // s after the body is down before the first roll
 	constexpr float kDownTimeout = 1.5f;       // dying clock starts at the latest this long after the stumble
 	// Rolling a body lying on its back onto its side lifts its weight about the shoulder edge: ~35–40 rad/s^2
 	// is needed just to balance gravity, so the roll must be well above that.
@@ -399,6 +451,9 @@ namespace DynamicRagdollSystem
 	using AngularImpulse = void (*)(RE::hknpBSWorld*, std::uint32_t, const RE::hkVector4f*);
 	inline AngularImpulse                           g_angularImpulse{};
 	inline std::vector<Death>                       g_deaths;
+	// NPCs whose head a hit dismembered or exploded (g_mutex). Gore heads keep their ragdoll joint, so UpdateDetached
+	// does not see them.
+	inline std::unordered_set<RE::TESFormID>        g_headless;
 	inline std::vector<Death>                       g_knockdowns;  // living NPCs in an engine ragdoll: brace / flail only
 	inline std::vector<RE::TESFormID>               g_pendingDeaths;
 	inline std::vector<RE::TESFormID>               g_burningDeaths;  // on fire at KillImpl
@@ -684,6 +739,7 @@ namespace DynamicRagdollSystem
 	void ApplyGrip(Death& a_stumble, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_strength);
 	bool CastGround(RE::TESObjectCELL* a_cell, Vec3 a_pos, float& a_ground);
 	void UpdateGround(Death& a_death, RE::Actor* a_actor, RE::bhkWorld* a_world);
+	void CastCrawlRay(Death& a_death, RE::Actor* a_actor, RE::bhkWorld* a_world);
 	void ApplyBrace(Death& a_death, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_lean, float a_scale,
 		float a_ground);
 	void StepDeath(Death& a_stumble, RE::Actor* a_actor, float a_now);

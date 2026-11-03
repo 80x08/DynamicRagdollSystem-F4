@@ -71,15 +71,15 @@ namespace DynamicRagdollSystem
 	}
 
 
-	// Ground height under a point (physics units), via the engine's pick ray (bhkPickData + TESObjectCELL::Pick;
-	// start/end in game units, the pick scales them). Returns false when nothing is hit within kRayDown.
-	bool CastGround(RE::TESObjectCELL* a_cell, Vec3 a_pos, float& a_ground)
+	// World geometry ray between two points (physics units), via the engine's pick ray (bhkPickData +
+	// TESObjectCELL::Pick; start/end in game units, the pick scales them). a_fraction: 0 at a_from, 1 at a_to.
+	// Takes the world's read lock: never call with the world write lock held.
+	bool PickFraction(RE::TESObjectCELL* a_cell, Vec3 a_from, Vec3 a_to, float& a_fraction)
 	{
 		constexpr float kGame = 69.99125f;  // game units per physics unit
 		RE::bhkPickData pick{};
-		const RE::NiPoint3 from{ a_pos.x * kGame, a_pos.y * kGame, (a_pos.z + kRayUp) * kGame };
-		const RE::NiPoint3 to{ a_pos.x * kGame, a_pos.y * kGame, (a_pos.z - kRayDown) * kGame };
-		pick.SetStartEnd(from, to);
+		pick.SetStartEnd(RE::NiPoint3{ a_from.x * kGame, a_from.y * kGame, a_from.z * kGame },
+			RE::NiPoint3{ a_to.x * kGame, a_to.y * kGame, a_to.z * kGame });
 		pick.castQuery.m_filterData.m_collisionFilterInfo = static_cast<std::uint32_t>(RE::COL_LAYER::kPathingPick);
 		// Explicit layer list (bhkWorld::Pick then uses hknpBSCustomCollisionFilter: one bit per layer; bodies with a
 		// collision group, like ragdoll parts, are only hit if their layer is listed; ungrouped world geometry always).
@@ -89,10 +89,62 @@ namespace DynamicRagdollSystem
 		                           bit(L::kGround) | bit(L::kStairHelper);
 		static_cast<void>(a_cell->Pick(pick));  // the hit is read from pick, not the returned object
 		if (!pick.HasHit()) return false;
-		const float fraction = pick.GetHitFraction();
-		if (!std::isfinite(fraction)) return false;
+		a_fraction = pick.GetHitFraction();
+		return std::isfinite(a_fraction);
+	}
+
+
+	// Ground height under a point (physics units). Returns false when nothing is hit within kRayDown.
+	bool CastGround(RE::TESObjectCELL* a_cell, Vec3 a_pos, float& a_ground)
+	{
+		float fraction = 1.0f;
+		if (!PickFraction(a_cell, Vec3{ a_pos.x, a_pos.y, a_pos.z + kRayUp }, Vec3{ a_pos.x, a_pos.y, a_pos.z - kRayDown }, fraction))
+			return false;
 		a_ground = a_pos.z + kRayUp - (kRayUp + kRayDown) * fraction;
 		return true;
+	}
+
+
+	// The body's front direction (trunk up × left → right thigh line; standing: up z × right x = front y) and the
+	// stomach (middle of the trunk). False without both thighs or a trunk.
+	bool CrawlFront(const std::vector<DeathSample>& a_samples, Vec3& a_front, Vec3& a_stomach)
+	{
+		const auto [low, high] = TrunkEnds(a_samples);
+		const DeathSample* thigh[2]{};
+		for (const auto& s : a_samples)
+			if (s.ref->leg && !s.ref->knee && !s.ref->foot && s.ref->side) thigh[s.ref->side == 'L' ? 0 : 1] = &s;
+		if (!low || !high || low == high || !thigh[0] || !thigh[1]) return false;
+		const auto up = Unit(Sub(high->pos, low->pos));
+		auto right = Sub(thigh[1]->pos, thigh[0]->pos);
+		right = Sub(right, Scale(up, Dot(right, up)));
+		if (Length(right) < 0.05f) return false;
+		a_front = Cross(up, Unit(right));
+		a_stomach = Scale(Add(low->pos, high->pos), 0.5f);
+		return true;
+	}
+
+
+	// Face-down ray for a pending crawl: from the stomach out of the body's front. Cast outside the world lock.
+	void CastCrawlRay(Death& a_death, RE::Actor* a_actor, RE::bhkWorld* a_world)
+	{
+		a_death.crawlRayValid = false;
+		auto* npWorld = a_world ? a_world->m_worldNP.get() : nullptr;
+		auto* cell = a_actor->GetParentCell();
+		if (!npWorld || !cell) return;
+		auto& worldBodies = npWorld->m_bodyManager.m_bodies;
+		std::vector<DeathSample> samples;
+		for (const auto& body : a_death.bodies) {
+			if (body.index < 0 || body.index >= worldBodies.size() || worldBodies[body.index].m_id.m_value != body.id.m_value) continue;
+			if (a_death.Detached(body.id.m_value)) continue;
+			samples.push_back({ &body, MotionState{}, BodyPosition(worldBodies[body.index]) });
+		}
+		Vec3 front{}, stomach{};
+		if (!CrawlFront(samples, front, stomach)) return;
+		float fraction = 1.0f;
+		const bool hit = PickFraction(cell, stomach, Add(stomach, Scale(front, kCrawlRayLength)), fraction);
+		a_death.crawlFront = front;
+		a_death.crawlRayDist = hit ? fraction * kCrawlRayLength : 1.0e9f;
+		a_death.crawlRayValid = true;
 	}
 
 
@@ -804,6 +856,267 @@ namespace DynamicRagdollSystem
 	}
 
 
+	// Whole-body roll about the trunk's long axis (pelvis → chest, through the trunk centre) at a_accel rad/s^2
+	// (sign = direction). Every body gets the velocity of the rig rotating about the axis; torquing only the trunk
+	// could not turn the limbs hanging off it. False (nothing applied) unless the trunk lies flat.
+	bool RollTrunk(RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_accel)
+	{
+		const auto [low, high] = TrunkEnds(samples);  // pelvis / SPINE1, chest
+		if (!low || !high || low == high) return false;
+		const auto axis = Unit(Sub(high->pos, low->pos));
+		if (std::abs(axis.z) > 0.3f) return false;  // not lying flat: rolling about this axis would spin or flip it
+		const auto centre = Scale(Add(high->pos, low->pos), 0.5f);
+		const auto dOmega = Scale(axis, a_accel * dt);
+		const float cap = kRollMaxAccel * dt;
+		for (const auto& sample : samples) {
+			auto r = Sub(sample.pos, centre);
+			r = Sub(r, Scale(axis, Dot(r, axis)));  // perpendicular offset from the axis
+			auto deltaV = Cross(dOmega, r);
+			if (const float n = Length(deltaV); n > cap) deltaV = Scale(deltaV, cap / n);
+			// Legs are only dragged along by the hips: no lift and no spin of their own. Limp legs given the
+			// full rigid-body roll kept flying up after the burst.
+			const bool leg = sample.ref->leg;
+			if (leg) deltaV.z = std::min(deltaV.z, 0.0f);
+			const auto impulse = Scale(deltaV, 1.0f / sample.motion.inverseMass);
+			RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
+			g_linearImpulse(npWorld, sample.ref->id.m_value, &nativeImpulse);
+			// Each body also turns about the axis itself: the trunk bodies sit on the axis, so the linear
+			// part alone moved the limbs while the torso never turned over.
+			if (g_angularImpulse && !leg) {
+				float inverse[3][3]{};
+				AddWorldInverse(sample.motion, inverse);
+				Vec3 angular{};
+				if (Solve3(inverse, dOmega, angular)) {
+					RE::hkVector4f angularImpulse{ angular.x, angular.y, angular.z, 0.0f };
+					g_angularImpulse(npWorld, sample.ref->id.m_value, &angularImpulse);
+				}
+			}
+		}
+		return true;
+	}
+
+
+	// Pending crawl: decide from the face-down ray (CastCrawlRay). Hits the ground close = face down: crawl. Front
+	// toward the sky = face up: no crawl. Otherwise it lies on its side: roll it toward face down and look again
+	// once it settles, until kCrawlTurnTime. Returns true once decided.
+	bool CheckCrawl(Death& a_death, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_now)
+	{
+		const auto finish = [&](bool a_crawl, std::string_view a_why) {
+			a_death.crawlDecided = true;
+			a_death.crawling = a_crawl;
+			REX::INFO("DynamicRagdollSystem: {:08X} crawl: {} (ray {}, front z {:.2f}, {} turn rolls)"sv, a_death.formID, a_why,
+				a_death.crawlRayDist < 1.0e8f ? std::format("{:.2f}", a_death.crawlRayDist) : "no hit"s, a_death.crawlFront.z, a_death.crawlTurns);
+			if (a_crawl) {
+				a_death.grip = false;  // the arms crawl
+				a_death.crawlStart = std::max(a_now, a_death.downTime + kCrawlDelay);
+				static std::mt19937 rng{ std::random_device{}() };
+				a_death.crawlTime = std::uniform_real_distribution<float>{ kCrawlTime.min, kCrawlTime.max }(rng);
+				a_death.dyingTime = a_death.crawlStart + a_death.crawlTime - a_death.downTime;  // the entry ends with the crawl
+				REX::INFO("DynamicRagdollSystem: {:08X} crawl starts in {:.1f}s, lasts {:.1f}s"sv, a_death.formID, a_death.crawlStart - a_now, a_death.crawlTime);
+			}
+			else if (!a_death.grip && a_death.twitch <= 0.0f && a_death.roll <= 0.0f) a_death.dyingTime = 0.0f;  // nothing to play
+			return true;
+		};
+		if (a_death.headOffBefore) return finish(false, "headless, no crawl");  // before any ray or turn-over
+		if (a_death.headShotKill) return finish(false, "killed by a head shot, no crawl");
+		if (a_now < a_death.rollEnd) {  // turning over
+			RollTrunk(npWorld, samples, dt, a_death.rollSign * kRollAccel);
+			return false;
+		}
+		if (!a_death.crawlRayValid || a_now < a_death.rollEnd + kCrawlSettle) {
+			return a_now >= a_death.downTime + kCrawlTurnTime ? finish(false, "no face-down check in time") : false;
+		}
+		if (a_death.crawlRayDist < kCrawlDownDist) return finish(true, "face down, crawling");
+		if (a_death.crawlFront.z > 0.5f) return finish(false, "face up, no crawl");
+		const auto [low, high] = TrunkEnds(samples);
+		if (!low || !high || low == high || std::abs(Unit(Sub(high->pos, low->pos)).z) > 0.3f) return finish(false, "not lying flat, no crawl");
+		if (a_now >= a_death.downTime + kCrawlTurnTime) return finish(false, "still on its side, no crawl");
+		// On its side: roll so the front turns down (front changes by ω × front; its z must drop).
+		const auto axis = Unit(Sub(high->pos, low->pos));
+		a_death.rollSign = Cross(axis, a_death.crawlFront).z > 0.0f ? -1.0f : 1.0f;
+		a_death.rollEnd = a_now + kRollBurst;
+		++a_death.crawlTurns;
+		REX::INFO("DynamicRagdollSystem: {:08X} crawl: on its side (ray {}, front z {:.2f}), rolling face down"sv, a_death.formID,
+			a_death.crawlRayDist < 1.0e8f ? std::format("{:.2f}", a_death.crawlRayDist) : "no hit"s, a_death.crawlFront.z);
+		return false;
+	}
+
+
+	// Crawl (lying face down, instead of twitches/rolls): the arms take turns reaching ahead of the chest and pulling
+	// back to it, the legs drag. Hand drives are paired with the chest like the brace.
+	// shortcut: the body moves forward by a nudge on the trunk while an arm pulls, not by the hands gripping the
+	// ground; replace with hand/ground friction if it reads as sliding.
+	void ApplyCrawl(Death& a_death, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_now, float a_strength)
+	{
+		if (a_strength <= 0.0f) return;
+		const auto [low, high] = TrunkEnds(samples);  // pelvis / SPINE1, chest
+		if (!low || !high || low == high) return;
+		Vec3 forward{ high->pos.x - low->pos.x, high->pos.y - low->pos.y, 0.0f };  // head first
+		if (Length(forward) < 0.05f) return;
+		forward = Unit(forward);
+		const auto right = Cross(Vec3{ 0.0f, 0.0f, -1.0f }, forward);  // the body's right when its front faces down
+		const auto& g = npWorld->m_gravity;
+		const float cycle = (a_now - a_death.crawlStart) / std::max(kCrawlInterval, 0.1f);
+		float pull = 0.0f;
+		Vec3 chestImpulse{};
+		for (const auto& hand : samples) {
+			if (!hand.ref->hand || !hand.ref->side) continue;
+			const int k = hand.ref->side == 'L' ? 0 : 1;
+			const float phase = cycle + 0.5f * k - std::floor(cycle + 0.5f * k);
+			const bool reach = phase < 0.5f;
+			float armMass = 0.0f;
+			for (const auto& s : samples)
+				if (s.ref->arm && s.ref->side == hand.ref->side) armMass += 1.0f / s.motion.inverseMass;
+			const DeathSample* forearm = nullptr;  // the hand's parent body: driving it swings the whole arm forward
+			for (const auto& s : samples)
+				if (s.ref->id.m_value == hand.ref->parentId.m_value && s.ref->arm) forearm = &s;
+			const float sideSign = k ? 1.0f : -1.0f;
+			auto reachTarget = Add(Add(high->pos, Scale(forward, kCrawlReach)), Scale(right, kCrawlSide * sideSign));
+			reachTarget.z = high->pos.z + kCrawlLift;
+			// Hand reaching: damped relative to the chest. Planted: damped absolutely, so the hand stays put.
+			const auto drive = [&](const DeathSample& a_body, Vec3 a_target, float a_mass, bool a_relative) {
+				const auto vel = a_relative ? Sub(a_body.motion.linear, high->motion.linear) : a_body.motion.linear;
+				Vec3 deltaV = Scale(Sub(Scale(Sub(a_target, a_body.pos), kBraceKp), Scale(vel, kBraceKd)), dt * a_strength * kCrawlArmStrength);
+				const float n = Length(deltaV), cap = kBraceMaxAccel * dt;
+				if (!std::isfinite(n) || n < 1.0e-4f) return;
+				if (n > cap) deltaV = Scale(deltaV, cap / n);
+				const auto impulse = Scale(deltaV, std::max(a_mass, 1.0f / a_body.motion.inverseMass));
+				RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
+				g_linearImpulse(npWorld, a_body.ref->id.m_value, &nativeImpulse);
+				chestImpulse = Sub(chestImpulse, impulse);
+			};
+			if (reach) {
+				a_death.crawlPlanted[k] = false;
+				// Stuck at a joint limit (not getting closer): leave the arm limp for the rest of this reach instead of
+				// holding it twisted and stiff against the limit.
+				const float error = Length(Sub(reachTarget, hand.pos));
+				if (a_death.crawlBest[k] <= 0.0f) {  // new reach
+					a_death.crawlBest[k] = error;
+					a_death.crawlBestTime[k] = a_now;
+					a_death.crawlStalled[k] = false;
+				} else if (error < a_death.crawlBest[k] - kCrawlStallGain) {
+					a_death.crawlBest[k] = error;
+					a_death.crawlBestTime[k] = a_now;
+				} else if (a_now - a_death.crawlBestTime[k] > kCrawlStall) {
+					a_death.crawlStalled[k] = true;
+				}
+				if (a_death.crawlStalled[k]) continue;
+				// Hand or elbow up over the back (a tilted body, or the arm swung behind): not driven or held up this
+				// frame, so it drops instead of locking up there.
+				if (hand.pos.z - high->pos.z > kCrawlArmMaxHeight || (forearm && forearm->pos.z - high->pos.z > kCrawlArmMaxHeight)) continue;
+				// Elbow halfway between the shoulder and the reach target, so the arm stretches out instead of the
+				// forearm just lifting.
+				const auto shoulder = Add(Add(high->pos, Scale(forward, kCrawlShoulder)), Scale(right, kCrawlSide * sideSign));
+				auto elbow = Add(shoulder, Scale(Sub(reachTarget, shoulder), kCrawlElbow));
+				elbow.z = high->pos.z + kCrawlLift;
+				drive(hand, reachTarget, forearm ? 0.5f * armMass : armMass, true);
+				if (forearm) drive(*forearm, elbow, 0.5f * armMass, true);
+				// Carry the arm's weight while it reaches, paid by the chest.
+				for (const auto& s : samples) {
+					if (!s.ref->arm || s.ref->side != hand.ref->side) continue;
+					const auto lift = Scale(Vec3{ g.x, g.y, g.z }, -dt * a_strength / s.motion.inverseMass);
+					RE::hkVector4f liftImpulse{ lift.x, lift.y, lift.z, 0.0f };
+					g_linearImpulse(npWorld, s.ref->id.m_value, &liftImpulse);
+					chestImpulse = Sub(chestImpulse, lift);
+				}
+			} else {
+				if (!a_death.crawlPlanted[k]) {
+					a_death.crawlPlanted[k] = true;
+					a_death.crawlPlant[k] = hand.pos;
+					// Only a hand planted ahead of the chest pulls; one left behind (first half-cycle, stuck reach) stays
+					// limp, or pinning it held the arm locked behind the body.
+					const float ahead = Dot(Sub(hand.pos, high->pos), forward);
+					a_death.crawlPulling[k] = ahead >= kCrawlMinPlant;
+					if (a_death.crawlPulling[k]) ++a_death.crawlPulls;
+					// Tuning: how far the reach got (0 = reached its target) and how fast the body is moving.
+					REX::INFO("DynamicRagdollSystem: {:08X} crawl {} hand {:.2f} short of its reach target{} (ahead of chest {:.2f}): {}, trunk speed {:.2f}, leg/head pushes {}/{} accepted"sv,
+						a_death.formID, hand.ref->side, Length(Sub(reachTarget, hand.pos)), a_death.crawlStalled[k] ? " (stalled)" : "", ahead,
+						a_death.crawlPulling[k] ? std::format("pull {}", a_death.crawlPulls) : "no pull"s, Dot(high->motion.linear, forward),
+						a_death.crawlLimbHits, a_death.crawlLimbTries);
+					a_death.crawlLimbHits = a_death.crawlLimbTries = 0;
+					a_death.crawlBest[k] = 0.0f;  // the next reach starts fresh
+				}
+				if (a_death.crawlPulling[k]) {
+					pull = std::max(pull, std::sin((phase - 0.5f) * 6.2831853f));  // 0 → 1 → 0
+					drive(hand, a_death.crawlPlant[k], armMass, false);
+				}
+			}
+		}
+		RE::hkVector4f toChest{ chestImpulse.x, chestImpulse.y, chestImpulse.z, 0.0f };
+		g_linearImpulse(npWorld, high->ref->id.m_value, &toChest);
+		// Ankles bend with each pull (toes tuck under and dig in), relaxing while the arms reach. Dorsiflexion turns the
+		// foot about the body's right axis (standing: right x, toes y → up).
+		if (pull > 0.0f) {
+			for (const auto& joint : a_death.joints) {
+				if (!joint.foot || a_death.Detached(joint.id.m_value)) continue;
+				BodyRef parentRef{};
+				parentRef.index = joint.parentIndex;
+				parentRef.id = joint.parentId;
+				ApplyJointImpulse(npWorld, joint, parentRef, Scale(right, kCrawlAnkleAccel * pull * a_strength * dt),
+					kCrawlLimbMaxTorque * a_strength * dt);
+			}
+		}
+		// Legs and head: each joint is brought to a target speed about one axis (relative to its parent), so the motion
+		// follows the cycle without winding up against a limit. Axes in the face-down frame: hip abduction turns the
+		// thigh about the vertical (right leg +z), knee flexion about -right, neck lift about +right, turn to the right
+		// about -z.
+		const auto find = [&](std::uint32_t a_id) -> const DeathSample* {
+			for (const auto& s : samples)
+				if (s.ref->id.m_value == a_id) return &s;
+			return nullptr;
+		};
+		const auto spin = [&](const BodyRef& a_child, Vec3 a_axis, float a_want) {
+			const auto* child = find(a_child.id.m_value);
+			const auto* parent = find(a_child.parentId.m_value);
+			if (!child || !parent) return;
+			const auto relative = Sub(Rotate(child->motion.orientation, child->motion.angular), Rotate(parent->motion.orientation, parent->motion.angular));
+			const float change = std::clamp(a_want - Dot(relative, a_axis), -kCrawlLimbAccel * dt, kCrawlLimbAccel * dt);
+			BodyRef parentRef{};
+			parentRef.index = a_child.parentIndex;
+			parentRef.id = a_child.parentId;
+			++a_death.crawlLimbTries;
+			if (ApplyJointImpulse(npWorld, a_child, parentRef, Scale(a_axis, change), kCrawlLimbMaxTorque * a_strength * dt)) ++a_death.crawlLimbHits;
+		};
+		const float omega = 6.2831853f / std::max(kCrawlInterval, 0.1f);  // rad/s of the cycle
+		for (const auto& joint : a_death.joints) {
+			if (!joint.leg || joint.foot || !joint.side || a_death.Detached(joint.id.m_value)) continue;
+			const int j = joint.side == 'L' ? 0 : 1;
+			const float k = static_cast<float>(1 - j);  // the opposite arm
+			const float phase = cycle + 0.5f * k - std::floor(cycle + 0.5f * k);
+			const float wave = std::sin(phase * 6.2831853f) * a_strength;  // + while that arm reaches (draw up), - while it pulls
+			if (joint.knee) spin(joint, Scale(right, -1.0f), kCrawlKneeSpeed * wave);
+			else spin(joint, Vec3{ 0.0f, 0.0f, j ? 1.0f : -1.0f }, kCrawlHipSpeed * wave);
+		}
+		int heads = 0;
+		for (const auto& s : samples)
+			if (s.ref->head && s.ref->constraintId >= 0) ++heads;
+		if (heads > 0) {
+			const float c = cycle - std::floor(cycle);
+			// Turn angle (to the right +) = -turn·sin(2πc): left while the left arm reaches (c < 0.5). Lift bobs twice a
+			// cycle: lift·(1 - cos 4πc)/2. Their rates, shared over neck and head bodies.
+			const float turnRate = -kCrawlHeadTurn * omega * std::cos(c * 6.2831853f);
+			const float liftRate = kCrawlHeadLift * omega * std::sin(c * 12.566371f);
+			for (const auto& s : samples) {
+				if (!s.ref->head || s.ref->constraintId < 0) continue;
+				spin(*s.ref, Vec3{ 0.0f, 0.0f, -1.0f }, turnRate * a_strength / heads);
+				spin(*s.ref, right, liftRate * a_strength / heads);
+			}
+		}
+		// The nudge: everything but the legs (they drag) and arms (a planted hand holds) is brought up to the crawl
+		// speed along the crawl direction while an arm pulls. Trunk alone could not beat the whole body's friction.
+		const float want = kCrawlSpeed * a_strength * pull;
+		if (want <= 0.0f) return;
+		for (const auto& s : samples) {
+			if (s.ref->leg || s.ref->arm) continue;
+			const float speed = Dot(s.motion.linear, forward);
+			if (speed >= want) continue;
+			const auto impulse = Scale(forward, std::min(want - speed, kCrawlAccel * dt) / s.motion.inverseMass);
+			RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
+			g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
+		}
+	}
+
+
 	// After the stumble: the body lies there clutching the wound, twitching and now and then rolling, with
 	// everything decaying to fully limp over kDyingTime. Twitches are paired joint impulses (spine/legs; the
 	// gripping arm is not in the joint list); rolls are a small sideways kick on the trunk.
@@ -818,8 +1131,10 @@ namespace DynamicRagdollSystem
 		std::vector<DeathSample> samples;
 		UpdateDetached(a_death, npWorld);
 		// Head cut off during the dying phase ends it (OnWorldUpdate erases the entry); already off at the start: carry on.
-		const bool headOff = std::any_of(a_death.bodies.begin(), a_death.bodies.end(),
-			[&](const BodyRef& a_body) { return a_body.head && a_death.Detached(a_body.id.m_value); });
+		// g_mutex is held here (OnWorldUpdate's death loop).
+		const bool headOff = g_headless.contains(a_death.formID) ||
+		                     std::any_of(a_death.bodies.begin(), a_death.bodies.end(),
+								 [&](const BodyRef& a_body) { return a_body.head && a_death.Detached(a_body.id.m_value); });
 		if (!a_death.dyingStepped) {
 			a_death.dyingStepped = true;
 			a_death.headOffBefore = headOff;
@@ -856,7 +1171,9 @@ namespace DynamicRagdollSystem
 			const bool lying = low && high && low != high && std::abs(Unit(Sub(high->pos, low->pos)).z) < 0.5f && comSpeed < 0.6f;
 			if (lying || a_now >= a_death.end + kDownTimeout) {
 				a_death.downTime = a_now;
-				a_death.nextRoll = a_now + kFirstRollDelay;
+				const bool fire = a_death.burnDown || a_death.burnedToDeath;
+				a_death.nextTwitch = a_now + kTwitchDelay;
+				a_death.nextRoll = a_now + (fire ? kBurnRollDelay : kTwitchDelay);
 				a_death.dyingLogged = true;
 				REX::INFO("DynamicRagdollSystem: {:08X} dying phase ({:.1f}s), body {} {:.2f}s after the stumble"sv, a_death.formID,
 					a_death.dyingTime, lying ? "down" : "still up", a_now - a_death.end);
@@ -872,8 +1189,16 @@ namespace DynamicRagdollSystem
 				return;
 			}
 		}
+		// Crawl wins over twitching, but only face down; nothing else plays until that is decided.
+		if (a_death.crawlRolled && !a_death.crawlDecided && !CheckCrawl(a_death, npWorld, samples, dt, a_now)) return;
 		const float progress = std::clamp((a_now - a_death.downTime) / std::max(a_death.dyingTime, 0.01f), 0.0f, 1.0f);
 		const float strength = 1.0f - progress;
+		if (a_death.crawling) {
+			// Fades over its own time from its start, not over the dying time from the body going down.
+			const float crawlStrength = 1.0f - std::clamp((a_now - a_death.crawlStart) / std::max(a_death.crawlTime, 0.01f), 0.0f, 1.0f);
+			if (a_now >= a_death.crawlStart) ApplyCrawl(a_death, npWorld, samples, dt, a_now, crawlStrength);
+			return;
+		}
 
 		// The grip holds fully for the first half, then loosens.
 		if (a_death.grip) ApplyGrip(a_death, npWorld, samples, dt, std::min(1.0f, 2.0f * strength));
@@ -952,45 +1277,10 @@ namespace DynamicRagdollSystem
 			a_death.rollSign = unit(rng) < 0.5f ? -1.0f : 1.0f;
 			a_death.rollApplied = false;
 		}
-		if (roll > 0.0f && a_now < a_death.rollEnd) {
-			const auto [low, high] = TrunkEnds(samples);  // pelvis / SPINE1, chest
-			if (low && high && low != high) {
-				// Whole-body roll: every body gets the velocity of the rig rotating about the trunk's long axis
-				// (through the trunk centre). Torquing only the trunk could not turn the limbs hanging off it.
-				const auto axis = Unit(Sub(high->pos, low->pos));
-				if (std::abs(axis.z) > 0.3f) return;  // not lying flat: rolling about this axis would spin or flip it
-				if (!a_death.rollApplied) {
-					a_death.rollApplied = true;
-					++a_death.rollCount;
-				}
-				const auto centre = Scale(Add(high->pos, low->pos), 0.5f);
-				const auto dOmega = Scale(axis, a_death.rollSign * kRollAccel * roll * dt);
-				const float cap = kRollMaxAccel * dt;
-				for (const auto& sample : samples) {
-					auto r = Sub(sample.pos, centre);
-					r = Sub(r, Scale(axis, Dot(r, axis)));  // perpendicular offset from the axis
-					auto deltaV = Cross(dOmega, r);
-					if (const float n = Length(deltaV); n > cap) deltaV = Scale(deltaV, cap / n);
-					// Legs are only dragged along by the hips: no lift and no spin of their own. Limp legs given the
-					// full rigid-body roll kept flying up after the burst.
-					const bool leg = sample.ref->leg;
-					if (leg) deltaV.z = std::min(deltaV.z, 0.0f);
-					const auto impulse = Scale(deltaV, 1.0f / sample.motion.inverseMass);
-					RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
-					g_linearImpulse(npWorld, sample.ref->id.m_value, &nativeImpulse);
-					// Each body also turns about the axis itself: the trunk bodies sit on the axis, so the linear
-					// part alone moved the limbs while the torso never turned over.
-					if (g_angularImpulse && !leg) {
-						float inverse[3][3]{};
-						AddWorldInverse(sample.motion, inverse);
-						Vec3 angular{};
-						if (Solve3(inverse, dOmega, angular)) {
-							RE::hkVector4f angularImpulse{ angular.x, angular.y, angular.z, 0.0f };
-							g_angularImpulse(npWorld, sample.ref->id.m_value, &angularImpulse);
-						}
-					}
-				}
-			}
+		if (roll > 0.0f && a_now < a_death.rollEnd && RollTrunk(npWorld, samples, dt, a_death.rollSign * kRollAccel * roll) &&
+			!a_death.rollApplied) {
+			a_death.rollApplied = true;
+			++a_death.rollCount;
 		}
 	}
 
@@ -1001,7 +1291,7 @@ namespace DynamicRagdollSystem
 		const bool npc = a_actor && !a_actor->IsPlayerRef() && !a_actor->IsDead(false) && !InLockedAnimation(a_actor);
 		if (a_actor && !a_actor->IsPlayerRef() && !a_actor->IsDead(false))
 			if (const auto why = LockedReason(a_actor)) LogSkipOnce(a_actor, "death skipped", why);
-		const bool tracked = npc && (kDeathStumbleChance > 0.0f || kDeathGripChance > 0.0f || kTwitchChance > 0.0f);
+		const bool tracked = npc && (kDeathStumbleChance > 0.0f || kDeathGripChance > 0.0f || kTwitchChance > 0.0f || kCrawlChance > 0.0f);
 		if (npc && kDisableDeathAnimation) a_ragdollInstant = true;
 		if (tracked && IsBurning(a_actor)) {
 			std::scoped_lock lock{ g_mutex };
@@ -1054,14 +1344,15 @@ namespace DynamicRagdollSystem
 					burned = kBurnDeathTwitchMax > 0.0f || kBurnDeathRollMax > 0.0f;
 				}
 			}
-			if (!death.stumble && !death.grip && !moves && !burned) {
+			death.crawlRolled = !burned && unit(rng) < kCrawlChance;  // burned deaths writhe instead
+			if (!death.stumble && !death.grip && !moves && !burned && !death.crawlRolled) {
 				REX::INFO("DynamicRagdollSystem: {:08X} death: no stumble, grip or twitch rolled; vanilla ragdoll"sv, formID);
 				continue;
 			}
 			death.support = pick(kDeathSupport);
 			death.upright = pick(kDeathUpright);
 			death.braking = pick(kDeathBraking);
-			death.dyingTime = (death.grip || moves || burned) ? pick(kDyingTime) : 0.0f;
+			death.dyingTime = (death.grip || moves || burned || death.crawlRolled) ? pick(kDyingTime) : 0.0f;
 			death.twitch = moves ? pick(kTwitchStrength) : 0.0f;
 			death.roll = moves ? pick(kRollStrength) : 0.0f;
 			if (burned) {
@@ -1076,15 +1367,20 @@ namespace DynamicRagdollSystem
 			death.start = a_now;
 			// Without a stumble, StepDeath still runs until the bodies are scanned (it then ends the stumble).
 			death.end = a_now + (death.stumble ? pick(kDeathStumbleTime) : 5.0f);
-			REX::INFO("DynamicRagdollSystem: {:08X} death rolled: stumble {} ({:.2f}s, support {:.2f}, upright {:.2f}, braking {:.2f}) grip {} dying {:.2f}s twitch {:.2f} roll {:.2f}"sv,
+			REX::INFO("DynamicRagdollSystem: {:08X} death rolled: stumble {} ({:.2f}s, support {:.2f}, upright {:.2f}, braking {:.2f}) grip {} dying {:.2f}s twitch {:.2f} roll {:.2f} crawl {}"sv,
 				formID, death.stumble, death.end - a_now, death.support, death.upright, death.braking, death.grip, death.dyingTime,
-				death.twitch, death.roll);
+				death.twitch, death.roll, death.crawlRolled);
 			std::scoped_lock lock{ g_mutex };
 			if (const auto it = g_lastHit.find(formID); it != g_lastHit.end() && a_now - it->second.time < kLastHitWindow) {
 				death.hitDir = it->second.dir;
 				death.hitBody = it->second.hitBody;
 				death.weapon = it->second.weapon;
 				death.damage = it->second.damage;
+				REX::INFO("DynamicRagdollSystem: {:08X} killing hit: flags {:08X} limb {}"sv, formID, it->second.flags, it->second.limb);
+				// Head limbs (Head1, Eye1, Head2, Brain). A fatal head shot often loses the head on death without any
+				// dismember flag on the hit, so it rules out the crawl by itself.
+				const auto limb = it->second.limb;
+				death.headShotKill = limb == 1 || limb == 2 || limb == 5 || limb == 0x10;
 				// Explosion deaths are flung: no balance help (support/upright/braking), the blast push, and the limbs
 				// flail while airborne. The stumble machinery still runs for the joints, grip and flailing.
 				if (it->second.explosion && unit(rng) >= kExplosionStumbleChance) {
