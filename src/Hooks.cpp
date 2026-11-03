@@ -140,7 +140,7 @@ namespace DynamicRagdollSystem
 			std::scoped_lock lock{ g_mutex };
 			for (auto it = g_knockdowns.begin(); it != g_knockdowns.end();) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(it->formID);
-				if (!actor || actor->IsDead(false) || actor->knockState == 0 || actor->knockState == kKnockGetUp || !actor->Get3D()) {
+				if (!actor || actor->IsDead(false) || actor->knockState == 0 || actor->knockState == kKnockGetUp || actor->knockState == kKnockDown || !actor->Get3D()) {
 					it = g_knockdowns.erase(it);
 					continue;
 				}

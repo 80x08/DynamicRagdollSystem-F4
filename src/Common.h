@@ -262,6 +262,7 @@ namespace DynamicRagdollSystem
 
 	constexpr float kScanInterval = 0.1f;
 	constexpr std::uint32_t kKnockGetUp = 6;  // ActorState::knockState: getting up (ragdoll blends back to animation)
+	constexpr std::uint32_t kKnockDown = 7;   // ActorState::knockState: legless crawl (feral ghoul lost a leg): animation, no ragdoll
 	constexpr float kReferenceRate = 30.0f;  // updates/s the controller gains are tuned for
 
 	// Tunables, overridden by Data\F4SE\Plugins\DynamicRagdollSystem.ini (see LoadSettings).

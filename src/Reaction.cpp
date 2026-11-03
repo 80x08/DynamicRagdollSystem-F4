@@ -717,7 +717,8 @@ namespace DynamicRagdollSystem
 	{
 		// Back to animation-following bodies, unless the engine took over (death or knockdown ragdoll). Needs the
 		// world lock; if it is busy, try again next frame (writing bodies unlocked, or skipping the undo, both break).
-		if (a_actor && !a_actor->IsDead(false) && a_actor->knockState == 0) {
+		// The legless crawl (kKnockDown) is animation: left dynamic, the ghoul sank through the floor.
+		if (a_actor && !a_actor->IsDead(false) && (a_actor->knockState == 0 || a_actor->knockState == kKnockDown)) {
 			auto* world = GetWorld(a_actor);
 			auto* npWorld = world ? world->m_worldNP.get() : nullptr;
 			if (auto* root = a_actor->Get3D(); root && npWorld && a_actor->currentProcess && a_actor->currentProcess->middleHigh) {
@@ -810,7 +811,7 @@ namespace DynamicRagdollSystem
 		for (const auto& handle : lists->highActorHandles) {
 			const auto actor = handle.get();
 			if (!actor || actor->IsPlayerRef() || actor->IsDead(false) || actor->knockState == 0 || actor->knockState == kKnockGetUp ||
-				!actor->Get3D()) continue;
+				actor->knockState == kKnockDown || !actor->Get3D()) continue;
 			const auto id = actor->GetFormID();
 			std::scoped_lock lock{ g_mutex };
 			if (std::any_of(g_knockdowns.begin(), g_knockdowns.end(), [&](const Death& a_d) { return a_d.formID == id; }) ||
