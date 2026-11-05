@@ -178,14 +178,23 @@ namespace DynamicRagdollSystem
 					death.dyingDamage += a_hit->totalDamage;
 		}
 		if (a_hit && a_actor && !a_actor->IsPlayerRef()) LogSkipOnce(a_actor, "hit hook", "first hit seen");
-		if (a_hit) QueueReaction(a_actor, *a_hit);
+		const bool queued = a_hit && QueueReaction(a_actor, *a_hit);
 		g_doHitMe(a_actor, a_hit);
 		if (a_hit && a_actor) {  // diagnostic: the killing hit's final flags/limb are logged when its death starts
+			// The push scale needs the flags the engine sets while applying the hit (blocked).
+			const float pushScale = HitPushScale(*a_hit);
 			std::scoped_lock lock{ g_mutex };
 			if (const auto it = g_lastHit.find(a_actor->GetFormID()); it != g_lastHit.end()) {
 				it->second.flags = a_hit->flags.underlying();
 				it->second.limb = static_cast<std::int32_t>(a_hit->damageLimb.get());
+				it->second.pushScale = pushScale;
 			}
+			if (queued)
+				for (auto& entry : g_pending | std::views::reverse)
+					if (entry.formID == a_actor->GetFormID()) {
+						entry.pushScale = pushScale;
+						break;
+					}
 		}
 		// Head dismembered/exploded by this hit (flags read after the engine applied it).
 		using Limb = RE::BGSBodyPartDefs::LIMB_ENUM;
@@ -527,6 +536,7 @@ namespace DynamicRagdollSystem
 					it->end = now + kReactionTime;
 					it->hitDir = entry.dir;
 					it->hitBody = entry.hitBody;
+					it->pushScale = entry.pushScale;
 					it->pushed = false;
 					std::scoped_lock driveLock{ g_driveMutex };
 					if (const auto drive = g_drives.find(driver); drive != g_drives.end()) {
@@ -579,6 +589,7 @@ namespace DynamicRagdollSystem
 				Stumble stumble{ entry.formID, now, now + kReactionTime };
 				stumble.hitDir = entry.dir;
 				stumble.hitBody = entry.hitBody;
+				stumble.pushScale = entry.pushScale;
 				stumble.burning = entry.burn;
 				stumble.burnUntil = now + 0.5f;
 				g_stumbles.push_back(std::move(stumble));
@@ -589,7 +600,50 @@ namespace DynamicRagdollSystem
 	}
 
 
-	// One-off shove on the upper body, once the ragdoll bodies are dynamic.
+	// Push scale from the hit: damage relative to fPushDamageRef (clamped), times the power-attack/blocked factors.
+	float HitPushScale(const RE::HitData& a_hit)
+	{
+		float scale = kPushDamageRef > 0.0f ? std::clamp(a_hit.totalDamage / kPushDamageRef, kPushScaleMin, kPushScaleMax) : 1.0f;
+		if (a_hit.flags.any(RE::HitData::Flag::kPowerAttack)) scale *= kPushPowerAttackMult;
+		if (a_hit.flags.any(RE::HitData::Flag::kBlocked)) scale *= kPushBlockedMult;
+		return scale;
+	}
+
+	// Joints between a body and the hit body along the ragdoll tree, or -1 if more than kPushRings (or not linked).
+	static std::int32_t JointsFromHit(const std::vector<BodyRef>& a_bodies, std::uint32_t a_hit, std::uint32_t a_id)
+	{
+		std::vector<std::uint32_t> ring{ a_hit }, seen{ a_hit };
+		const auto has = [](const std::vector<std::uint32_t>& a_list, std::uint32_t a_v) { return std::find(a_list.begin(), a_list.end(), a_v) != a_list.end(); };
+		for (std::int32_t joints = 0; joints <= kPushRings && !ring.empty(); ++joints) {
+			if (has(ring, a_id)) return joints;
+			std::vector<std::uint32_t> next;
+			for (const auto& body : a_bodies) {
+				const auto id = body.id.m_value, parent = body.parentId.m_value;
+				if (has(ring, parent) && !has(seen, id)) next.push_back(id), seen.push_back(id);
+				if (has(ring, id) && !has(seen, parent)) next.push_back(parent), seen.push_back(parent);
+			}
+			ring.swap(next);
+		}
+		return -1;
+	}
+
+	// Speed of the hit push for one body (physics units/s; 0 = not pushed): the hit body gets fHitPush, bodies 1..3
+	// joints from it fBodyPush halved per further joint. Unknown hit body (melee, explosions): the whole upper body
+	// (above the centre of mass) gets fHitPush. Scaled by the hit's damage/flags.
+	float PushSpeed(const Stumble& a_stumble, const BodyRef& a_body, bool a_hitKnown, float a_bodyZ, float a_comZ)
+	{
+		float speed = 0.0f;
+		if (!a_hitKnown) {
+			speed = a_bodyZ > a_comZ ? kHitPush : 0.0f;
+		} else if (const auto joints = JointsFromHit(a_stumble.bodies, a_stumble.hitBody, a_body.id.m_value); joints == 0) {
+			speed = kHitPush;
+		} else if (joints > 0) {
+			speed = kBodyPush * std::ldexp(1.0f, 1 - joints);
+		}
+		return speed * a_stumble.pushScale;
+	}
+
+	// One-off shove, once the ragdoll bodies are dynamic.
 	void ApplyHitPush(Stumble& a_stumble, RE::Actor* a_actor, float a_now)
 	{
 		auto* world = GetWorld(a_actor);
@@ -602,18 +656,13 @@ namespace DynamicRagdollSystem
 			a_stumble.nextScan = a_now + kScanInterval;
 			ScanBodies(a_stumble, a_actor, npWorld);
 			if (a_stumble.bodies.empty()) return;
-			std::uint64_t feet = 0;
-			for (const auto& body : a_stumble.bodies)
-				if (body.foot && body.bone >= 0 && body.bone < 64) feet |= std::uint64_t{ 1 } << body.bone;
-			std::scoped_lock driveLock{ g_driveMutex };
-			for (auto& [driver, state] : g_drives)
-				if (state.formID == a_stumble.formID) state.footBones = feet;
 		}
 		auto& worldBodies = npWorld->m_bodyManager.m_bodies;
 		struct Sample { const BodyRef* ref; float inverseMass; Vec3 pos; };
 		std::vector<Sample> samples;
 		Vec3 com{};
 		float mass = 0.0f;
+		float lowest = std::numeric_limits<float>::max();
 		for (const auto& body : a_stumble.bodies) {
 			if (body.index < 0 || body.index >= worldBodies.size() || worldBodies[body.index].m_id.m_value != body.id.m_value) continue;
 			MotionState motion{};
@@ -621,29 +670,38 @@ namespace DynamicRagdollSystem
 			samples.push_back({ &body, motion.inverseMass, BodyPosition(worldBodies[body.index]) });
 			com = Add(com, Scale(samples.back().pos, 1.0f / motion.inverseMass));
 			mass += 1.0f / motion.inverseMass;
+			lowest = std::min(lowest, samples.back().pos.z);
 		}
 		if (samples.size() < a_stumble.bodies.size() / 2 || mass <= 0.0f) return;
 		com = Scale(com, 1.0f / mass);
-		// The body part that was hit gets kHitPush along the hit; the rest of the upper body kBodyPush.
-		// Without a known hit body (melee, explosions) the whole upper body gets kHitPush.
+		// Floor level by height above the lowest body, not bone names: creature feet are Ankle/Toe/LFOOT.
+		// shortcut: fixed heights tuned for human-sized skeletons; scale by the actor's height if giants misbehave.
+		std::uint64_t feet = 0;
+		for (const auto& s : samples)
+			if (s.pos.z - lowest < kFootBodyHeight && s.ref->bone >= 0 && s.ref->bone < 64) feet |= std::uint64_t{ 1 } << s.ref->bone;
+		{
+			std::scoped_lock driveLock{ g_driveMutex };
+			for (auto& [driver, state] : g_drives)
+				if (state.formID == a_stumble.formID) state.footBones = feet;
+		}
 		const bool hitKnown = std::any_of(samples.begin(), samples.end(),
 			[&](const Sample& a_s) { return a_s.ref->id.m_value == a_stumble.hitBody; });
 		std::int32_t pushed = 0;
 		for (const auto& s : samples) {
-			const bool isHit = s.ref->id.m_value == a_stumble.hitBody;
-			if (!isHit && s.pos.z <= com.z) continue;
-			const float speed = a_stumble.burning ? kBurnShove : isHit || !hitKnown ? kHitPush : kBodyPush;  // catching fire: a stagger, not a shot
+			const float speed = a_stumble.burning ? (s.pos.z > com.z ? kBurnShove : 0.0f) :  // catching fire: a stagger, not a shot
+			                                        PushSpeed(a_stumble, *s.ref, hitKnown, s.pos.z, com.z);
+			if (speed <= 0.0f) continue;
 			auto impulse = Scale(a_stumble.hitDir, speed / s.inverseMass);
-			// Feet and calves sit at floor level: a downward shot pushed them through the ground. Horizontal and
-			// upward part only (not renormalized, so a steep shot stays a small push).
-			if (s.ref->foot || s.ref->knee) impulse.z = std::max(impulse.z, 0.0f);
+			// Floor-level bodies: a downward shot pushed them through the ground. Horizontal and upward part only
+			// (not renormalized, so a steep shot stays a small push).
+			if (s.pos.z - lowest < kFloorBodyHeight) impulse.z = std::max(impulse.z, 0.0f);
 			RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
 			g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
 			++pushed;
 		}
 		a_stumble.pushed = true;
-		REX::INFO("DynamicRagdollSystem: {:08X} pushed {} bodies (hit body {}) after {:.2f}s"sv,
-			a_stumble.formID, pushed, hitKnown ? "found" : "unknown", a_now - a_stumble.start);
+		REX::INFO("DynamicRagdollSystem: {:08X} pushed {} bodies x{:.2f} (hit body {}) after {:.2f}s"sv,
+			a_stumble.formID, pushed, a_stumble.pushScale, hitKnown ? "found" : "unknown", a_now - a_stumble.start);
 	}
 
 

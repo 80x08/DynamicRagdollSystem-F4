@@ -79,6 +79,7 @@ namespace DynamicRagdollSystem
 		std::vector<BodyRef> joints;
 		Vec3                 hitDir{};  // unit direction of the hit
 		std::uint32_t        hitBody{ 0x7FFFFFFF };
+		float                pushScale{ 1.0f };  // HitPushScale of the hit
 		bool                 pushed{ false };
 		// diagnostics: actor (game units) vs trunk body (physics units) movement since the hit
 		RE::NiPoint3         actorStart{};
@@ -229,6 +230,7 @@ namespace DynamicRagdollSystem
 		float         time{ -100.0f };
 		std::uint32_t flags{ 0 };     // HitData flags after the engine applied the hit (diagnostic)
 		std::int32_t  limb{ -1 };     // HitData damageLimb (diagnostic)
+		float         pushScale{ 1.0f };  // HitPushScale (final damage and flags)
 	};
 
 	struct Pending
@@ -236,6 +238,7 @@ namespace DynamicRagdollSystem
 		RE::TESFormID formID{};
 		Vec3          dir{};                      // unit direction of the hit (projectile travel)
 		std::uint32_t hitBody{ 0x7FFFFFFF };      // hknpBodyId of the body part that was hit, if known
+		float         pushScale{ 1.0f };          // HitPushScale of the hit
 		bool          burn{ false };              // started because the NPC is on fire
 	};
 
@@ -274,7 +277,15 @@ namespace DynamicRagdollSystem
 	inline float kRecoverTime = 0.8f;       // gains ramp from kHitSoftness back to 1 over this time
 	inline float kBlendOut = 0.3f;          // ragdoll weight fades to 0 over the end of the reaction
 	inline float kHitPush = 8.0f;           // velocity kick on the body part that was hit, physics units/s
-	inline float kBodyPush = 5.5f;          // smaller kick on the rest of the upper body, physics units/s
+	inline float kBodyPush = 5.5f;          // kick on bodies one joint from the hit body (halved per further joint), physics units/s
+	inline float kPushDamageRef = 25.0f;    // damage that gives fHitPush/fBodyPush as set (0 = push ignores damage)
+	inline float kPushScaleMin = 0.5f;      // damage scale clamp
+	inline float kPushScaleMax = 2.0f;
+	inline float kPushPowerAttackMult = 1.5f;  // extra scale for melee power attacks
+	inline float kPushBlockedMult = 0.6f;      // extra scale for blocked hits
+	constexpr std::int32_t kPushRings = 3;     // joints from the hit body that still get pushed
+	constexpr float kFloorBodyHeight = 0.36f;  // body centre this far above the lowest one = floor level (~25 game units): no downward push
+	constexpr float kFootBodyHeight = 0.1f;    // ... this far (~7 game units) = foot/paw: drive at full strength during a reaction
 	inline float kMaxCatchUpSpeed = 7.0f;  // ragdoll may close the gap to the animated pose this fast, physics units/s
 	inline float kAttackSoftness = 0.1f;     // stiffness floor while the NPC is in a melee attack (swings stay intact)
 	inline float kAttackCatchUpSpeed = 9.0f;  // catch-up speed while in a melee attack (fast swings outrun the normal one)
@@ -733,6 +744,8 @@ namespace DynamicRagdollSystem
 	void InstallPostPhysicsHook();
 	void ProcessPending();
 	void ApplyHitPush(Stumble& a_stumble, RE::Actor* a_actor, float a_now);
+	float HitPushScale(const RE::HitData& a_hit);
+	float PushSpeed(const Stumble& a_stumble, const BodyRef& a_body, bool a_hitKnown, float a_bodyZ, float a_comZ);
 	void EnforceNoCCLayer(Stumble& a_stumble, RE::Actor* a_actor);
 	void TraceMovement(Stumble& a_stumble, RE::Actor* a_actor, float a_now);
 	bool EndStumble(const Stumble& a_stumble, RE::Actor* a_actor);

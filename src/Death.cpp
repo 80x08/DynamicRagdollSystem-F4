@@ -644,18 +644,19 @@ namespace DynamicRagdollSystem
 				RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
 				g_linearImpulse(npWorld, foot->ref->id.m_value, &nativeImpulse);
 			}
-			// One-off push from the killing hit: the hit body part gets kHitPush, the rest of the upper body
-			// kBodyPush (whole upper body kHitPush if the hit part is unknown). No push without a recent hit.
+			// One-off push from the killing hit, spread like the reaction push (PushSpeed). No push without a recent hit.
 			if (!a_stumble.hitApplied) {
 				a_stumble.hitApplied = true;
 				const bool hitKnown = std::any_of(samples.begin(), samples.end(),
 					[&](const Sample& a_s) { return a_s.ref->id.m_value == a_stumble.hitBody; });
+				float lowest = std::numeric_limits<float>::max();
+				for (const auto& s : samples) lowest = std::min(lowest, s.pos.z);
 				Vec3 ownPush{};
 				for (const auto& s : samples) {
-					const bool isHit = s.ref->id.m_value == a_stumble.hitBody;
-					if (!isHit && s.pos.z <= com.z) continue;
-					auto impulse = Scale(a_stumble.hitDir, (isHit || !hitKnown ? kHitPush : kBodyPush) * kDeathPushScale / s.motion.inverseMass);
-					if (s.ref->foot || s.ref->knee) impulse.z = std::max(impulse.z, 0.0f);  // floor-level bodies: not into the ground
+					const float push = PushSpeed(a_stumble, *s.ref, hitKnown, s.pos.z, com.z) * kDeathPushScale;
+					if (push <= 0.0f) continue;
+					auto impulse = Scale(a_stumble.hitDir, push / s.motion.inverseMass);
+					if (s.pos.z - lowest < kFloorBodyHeight) impulse.z = std::max(impulse.z, 0.0f);  // floor-level bodies: not into the ground
 					ownPush = Add(ownPush, impulse);
 					RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
 					g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
@@ -1377,6 +1378,7 @@ namespace DynamicRagdollSystem
 			if (const auto it = g_lastHit.find(formID); it != g_lastHit.end() && a_now - it->second.time < kLastHitWindow) {
 				death.hitDir = it->second.dir;
 				death.hitBody = it->second.hitBody;
+				death.pushScale = it->second.pushScale;
 				death.weapon = it->second.weapon;
 				death.damage = it->second.damage;
 				REX::INFO("DynamicRagdollSystem: {:08X} killing hit: flags {:08X} limb {}"sv, formID, it->second.flags, it->second.limb);

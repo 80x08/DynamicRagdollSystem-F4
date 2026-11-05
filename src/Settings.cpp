@@ -36,8 +36,18 @@ fBlendOut=0.3
 ; Shove on the body part that was hit, along the shot direction. Range 0-50.
 ; (Melee and explosions have no hit body part: the whole upper body gets this.)
 fHitPush=8.0
-; Smaller shove on the rest of the upper body for the same hit. Range 0-50.
+; Shove on the body parts one joint away from the one that was hit; halved for each further joint, none past
+; three joints. Range 0-50.
 fBodyPush=5.5
+; Both shoves scale with the damage of the hit: fPushDamageRef damage gives them as set, half that damage half
+; the shove, and so on, kept within fPushScaleMin-fPushScaleMax. 0 = same shove for every hit. Range 0-10000.
+fPushDamageRef=25.0
+; Range 0-10.
+fPushScaleMin=0.5
+fPushScaleMax=2.0
+; Extra shove factor for melee power attacks, and for blocked hits. Range 0-10.
+fPushPowerAttackMult=1.5
+fPushBlockedMult=0.6
 ; How fast the body may catch up with the animated pose. Range 0.5-100.
 fMaxCatchUpSpeed=7.0
 ; While the NPC is in a melee attack (e.g. swinging a machete), the body never goes softer than this (fraction of
@@ -283,6 +293,12 @@ fCrawlTurnTime=3.0
 		read("fBlendOut", kBlendOut, 0.0f, 2.0f);
 		read("fHitPush", kHitPush, 0.0f, 50.0f);
 		read("fBodyPush", kBodyPush, 0.0f, 50.0f);
+		read("fPushDamageRef", kPushDamageRef, 0.0f, 10000.0f);
+		read("fPushScaleMin", kPushScaleMin, 0.0f, 10.0f);
+		read("fPushScaleMax", kPushScaleMax, 0.0f, 10.0f);
+		if (kPushScaleMax < kPushScaleMin) std::swap(kPushScaleMin, kPushScaleMax);
+		read("fPushPowerAttackMult", kPushPowerAttackMult, 0.0f, 10.0f);
+		read("fPushBlockedMult", kPushBlockedMult, 0.0f, 10.0f);
 		read("fMaxCatchUpSpeed", kMaxCatchUpSpeed, 0.5f, 100.0f);
 		read("fAttackSoftness", kAttackSoftness, 0.0f, 1.0f);
 		read("fAttackCatchUpSpeed", kAttackCatchUpSpeed, 0.5f, 100.0f);
@@ -407,8 +423,9 @@ fCrawlTurnTime=3.0
 		readDeath("fDeathCatchRange", kCatchRange, 0.0f, 20.0f);
 		readDeath("fDeathKneeBend", kDeathKneeBend, 0.0f, 120.0f);
 		REX::INFO("DynamicRagdollSystem: settings: hotReload {}"sv, kIniHotReload);
-		REX::INFO("DynamicRagdollSystem: settings: minDamage {} cooldown {} reaction {} softness {} recover {} blendOut {} push {} bodyPush {} catchUp {}"sv,
-			kMinDamage, kCooldown, kReactionTime, kHitSoftness, kRecoverTime, kBlendOut, kHitPush, kBodyPush, kMaxCatchUpSpeed);
+		REX::INFO("DynamicRagdollSystem: settings: minDamage {} cooldown {} reaction {} softness {} recover {} blendOut {} push {} bodyPush {} catchUp {} pushDamageRef {} pushScale {}-{} powerAttack {} blocked {}"sv,
+			kMinDamage, kCooldown, kReactionTime, kHitSoftness, kRecoverTime, kBlendOut, kHitPush, kBodyPush, kMaxCatchUpSpeed,
+			kPushDamageRef, kPushScaleMin, kPushScaleMax, kPushPowerAttackMult, kPushBlockedMult);
 		REX::INFO("DynamicRagdollSystem: burn settings: reaction {} stiffness {} arms {} flail {} shove {} ({}-{}s) fall {}-{}s force {}; down roll {} ({}-{}s) grace {}s max {}s; death twitch {}-{} roll {}-{} time {}-{}s"sv,
 			kBurnReaction, kBurnStiffness, kBurnArmStiffness, kBurnFlail, kBurnShove, kBurnShoveMin, kBurnShoveMax, kBurnFallMin, kBurnFallMax,
 			kBurnFallForce, kBurnDownRoll, kBurnRollGapMin, kBurnRollGapMax, kBurnOutGrace, kBurnDownMax, kBurnDeathTwitchMin,
