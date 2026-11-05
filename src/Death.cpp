@@ -887,15 +887,16 @@ namespace DynamicRagdollSystem
 			auto deltaV = Cross(dOmega, r);
 			if (const float n = Length(deltaV); n > cap) deltaV = Scale(deltaV, cap / n);
 			// Legs are only dragged along by the hips: no lift and no spin of their own. Limp legs given the
-			// full rigid-body roll kept flying up after the burst.
-			const bool leg = sample.ref->leg;
-			if (leg) deltaV.z = std::min(deltaV.z, 0.0f);
+			// full rigid-body roll kept flying up after the burst. Arms too: an outstretched hand (far from the axis,
+			// light) was flung first and dragged the body over by the shoulder.
+			const bool limb = sample.ref->leg || sample.ref->arm;
+			if (limb) deltaV.z = std::min(deltaV.z, 0.0f);
 			const auto impulse = Scale(deltaV, 1.0f / sample.motion.inverseMass);
 			RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
 			g_linearImpulse(npWorld, sample.ref->id.m_value, &nativeImpulse);
 			// Each body also turns about the axis itself: the trunk bodies sit on the axis, so the linear
 			// part alone moved the limbs while the torso never turned over.
-			if (g_angularImpulse && !leg) {
+			if (g_angularImpulse && !limb) {
 				float inverse[3][3]{};
 				AddWorldInverse(sample.motion, inverse);
 				Vec3 angular{};
