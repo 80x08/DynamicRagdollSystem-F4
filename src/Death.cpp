@@ -557,6 +557,20 @@ namespace DynamicRagdollSystem
 						const auto impulse = Scale(deltaV, 1.0f / swing->motion.inverseMass);
 						RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
 						g_linearImpulse(npWorld, a_stumble.stepFoot, &nativeImpulse);
+						// Hip-muscle reaction on the trunk: an unreacted swing push added momentum toward the capture
+						// point every step, so the body sped up (longer steps, more push) and slid past its planted leg.
+						float trunkMass = 0.0f;
+						for (const auto& s : samples)
+							if (s.ref->pelvis || s.ref->spine) trunkMass += 1.0f / s.motion.inverseMass;
+						if (trunkMass > 0.0f) {
+							const auto backV = Scale(impulse, -1.0f / trunkMass);  // same velocity change on each trunk body
+							for (const auto& s : samples) {
+								if (!s.ref->pelvis && !s.ref->spine) continue;
+								const auto back = Scale(backV, 1.0f / s.motion.inverseMass);
+								RE::hkVector4f nativeBack{ back.x, back.y, back.z, 0.0f };
+								g_linearImpulse(npWorld, s.ref->id.m_value, &nativeBack);
+							}
+						}
 					}
 				}
 			}
