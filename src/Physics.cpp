@@ -589,27 +589,36 @@ namespace DynamicRagdollSystem
 
 	void ResolveImpulseFunction()
 	{
-		if (F4SE::GetRuntimeVersion() != REL::Version{ 1, 10, 163, 0 }) {
-			REX::INFO("DynamicRagdollSystem: requires OG 1.10.163"sv);
-			return;
-		}
-		static constexpr std::uint8_t linearExpected[35] = {
+		// Exact bytes of the two hknpBSWorld impulse wrappers: OG 35 bytes, AE 40 (tail-jumps to the activate call).
+		static constexpr std::uint8_t linearOG[] = {
 			0x89,0x54,0x24,0x10,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0xD9,0xE8,0xCF,0x6C,0x74,0xFF,
 			0x8B,0x54,0x24,0x38,0x48,0x8B,0xCB,0xE8,0x03,0x08,0x00,0x00,0x48,0x83,0xC4,0x20,0x5B,0xC3
 		};
-		const auto linear = REL::ID{ 488591 }.address();
-		std::uint8_t bytes[35]{};
-		if (!SafeRead(linear, bytes, sizeof(bytes)) || std::memcmp(bytes, linearExpected, sizeof(bytes)) != 0) {
+		static constexpr std::uint8_t angularOG[] = {
+			0x89,0x54,0x24,0x10,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0xD9,0xE8,0x9F,0x6D,0x74,0xFF,
+			0x8B,0x54,0x24,0x38,0x48,0x8B,0xCB,0xE8,0xD3,0x07,0x00,0x00,0x48,0x83,0xC4,0x20,0x5B,0xC3
+		};
+		static constexpr std::uint8_t linearAE[] = {
+			0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x20,0x8B,0xDA,0x48,0x8B,0xF9,0xE8,0x4C,0xCD,0x9E,0xFF,
+			0x8B,0xD3,0x48,0x8B,0xCF,0x48,0x8B,0x5C,0x24,0x30,0x48,0x83,0xC4,0x20,0x5F,0xE9,0xC8,0x07,0x00,0x00
+		};
+		static constexpr std::uint8_t angularAE[] = {
+			0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x20,0x8B,0xDA,0x48,0x8B,0xF9,0xE8,0x1C,0xCE,0x9E,0xFF,
+			0x8B,0xD3,0x48,0x8B,0xCF,0x48,0x8B,0x5C,0x24,0x30,0x48,0x83,0xC4,0x20,0x5F,0xE9,0x98,0x07,0x00,0x00
+		};
+		const bool ae = REX::FModule::IsRuntimeAE();
+		const auto matches = [](std::uintptr_t a_address, const std::uint8_t* a_expected, std::size_t a_size) {
+			std::uint8_t bytes[sizeof(linearAE)]{};
+			return a_size <= sizeof(bytes) && SafeRead(a_address, bytes, a_size) && std::memcmp(bytes, a_expected, a_size) == 0;
+		};
+		const auto linear = REL::ID{ 488591, 0, 2721630 }.address();
+		if (!(ae ? matches(linear, linearAE, sizeof(linearAE)) : matches(linear, linearOG, sizeof(linearOG)))) {
 			REX::INFO("DynamicRagdollSystem: impulse API fingerprint mismatch; hit push disabled"sv);
 			return;
 		}
 		g_linearImpulse = reinterpret_cast<LinearImpulse>(linear);
-		static constexpr std::uint8_t angularExpected[35] = {
-			0x89,0x54,0x24,0x10,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0xD9,0xE8,0x9F,0x6D,0x74,0xFF,
-			0x8B,0x54,0x24,0x38,0x48,0x8B,0xCB,0xE8,0xD3,0x07,0x00,0x00,0x48,0x83,0xC4,0x20,0x5B,0xC3
-		};
-		const auto angular = REL::ID{ 222853 }.address();
-		if (SafeRead(angular, bytes, sizeof(bytes)) && std::memcmp(bytes, angularExpected, sizeof(bytes)) == 0) {
+		const auto angular = REL::ID{ 222853, 0, 2721631 }.address();
+		if (ae ? matches(angular, angularAE, sizeof(angularAE)) : matches(angular, angularOG, sizeof(angularOG))) {
 			g_angularImpulse = reinterpret_cast<AngularImpulse>(angular);
 		} else {
 			REX::INFO("DynamicRagdollSystem: angular impulse fingerprint mismatch; death stumble without joint servo"sv);
@@ -622,7 +631,7 @@ namespace DynamicRagdollSystem
 	void SetTreeMotionType(RE::NiAVObject* a_root, RE::hknpMotionPropertiesId::Preset a_type)
 	{
 		using func_t = bool (*)(RE::NiAVObject*, RE::hknpMotionPropertiesId::Preset, bool, bool, bool);
-		static REL::Relocation<func_t> func{ REL::ID{ 357289 } };
+		static REL::Relocation<func_t> func{ REL::ID{ 357289, 0, 2277723 } };
 		func(a_root, a_type, true, true, true);
 	}
 
@@ -632,7 +641,7 @@ namespace DynamicRagdollSystem
 	void SetTreeCollisionLayer(RE::NiAVObject* a_root, RE::COL_LAYER a_layer)
 	{
 		using func_t = void (*)(RE::NiAVObject*, std::uint32_t);
-		static REL::Relocation<func_t> func{ REL::ID{ 715635 } };
+		static REL::Relocation<func_t> func{ REL::ID{ 715635, 0, 2278105 } };
 		func(a_root, static_cast<std::uint32_t>(a_layer));
 	}
 
@@ -653,7 +662,7 @@ namespace DynamicRagdollSystem
 		static std::uint64_t                 orig8 = 0, orig32 = 0;
 		static std::array<std::uint32_t, 32> origParts{};
 		static std::uint64_t                 last8 = 0, last32 = 0;
-		static REL::Relocation<std::uintptr_t*> global{ REL::ID{ 469495 } };
+		static REL::Relocation<std::uintptr_t*> global{ REL::ID{ 469495, 0, 4797438 } };
 		const auto filter = *global;
 		if (!filter) return;  // not created yet: retried next update
 		auto* masks = reinterpret_cast<std::uint64_t*>(filter + 0x1A0);

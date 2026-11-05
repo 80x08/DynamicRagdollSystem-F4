@@ -15,6 +15,12 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 
 	REX::WARN("DynamicRagdollSystem by 80x08"sv);  // WARN so it shows even when the log level is Warning
 
+	// Addresses are mapped for OG and AE only (RE_NOTES_AE.md); NG IDs are left 0.
+	if (REX::FModule::IsRuntimeNG()) {
+		REX::WARN("DynamicRagdollSystem: Next-Gen (1.10.98x) is not supported; plugin inactive"sv);
+		return false;
+	}
+
 	LoadSettings();
 	InstallHooks();
 	if (const auto* messaging = F4SE::GetMessagingInterface()) {

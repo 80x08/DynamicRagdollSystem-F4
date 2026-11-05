@@ -663,8 +663,10 @@ namespace DynamicRagdollSystem
 	// and zeroes the character-controller velocity if so. Our reaction must keep the ragdoll registered (the
 	// same check also gates the per-frame driveToPose call), so only this movement query is answered "no"
 	// for NPCs in a reaction.
+	// AE inlines that visitor into the movement update, so there it is the slot-19 hook below, by return address.
 	using RagdollActiveQuery = void (*)(void*, char**);
 	inline RagdollActiveQuery g_ragdollActiveQuery{};
+	inline std::uintptr_t     g_movementReturn = 0;  // AE only
 
 	// The graph's per-frame update (0x14161D9A0) also asks vtable slot 19 "ragdoll active?" first and, if so,
 	// skips writing the frame's root motion. Movement then reuses the last delta every frame: the NPC keeps the
@@ -672,6 +674,14 @@ namespace DynamicRagdollSystem
 	// pre-physics caller (it gates driveToPose), so only this one call site is answered "no", by return address.
 	inline REL::THookVFT<bool(void*)>* g_ragdollActiveHook = nullptr;
 	inline std::uintptr_t              g_graphUpdateReturn = 0;
+
+	// Graph-manager visitors (add / register / remove ragdoll): OG takes the manager, AE the actor's
+	// IAnimationGraphManagerHolder (it fetches and locks the manager itself). See RE_NOTES_AE.md.
+	inline void* GraphVisitorTarget(RE::Actor* a_actor)
+	{
+		if (REX::FModule::IsRuntimeAE()) return static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
+		return a_actor->currentProcess->middleHigh->animationGraphManager.get();
+	}
 
 	struct DeathSample { const BodyRef* ref; MotionState motion; Vec3 pos; };
 

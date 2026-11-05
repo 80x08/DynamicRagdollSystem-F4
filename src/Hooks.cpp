@@ -237,7 +237,7 @@ namespace DynamicRagdollSystem
 	void AddStepListener(RE::bhkWorld* a_world)
 	{
 		using Add = void (*)(RE::bhkWorld*, HavokStepListener*);
-		static const auto add = reinterpret_cast<Add>(REL::ID{ 137330 }.address());
+		static const auto add = reinterpret_cast<Add>(REL::ID{ 137330, 0, 2277747 }.address());
 		// shortcut: never freed; one small entry per world pointer the game ever steps.
 		static std::unordered_map<RE::bhkWorld*, HavokStepListener> listeners;
 		auto& listener = listeners[a_world];

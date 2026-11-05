@@ -66,9 +66,9 @@ namespace DynamicRagdollSystem
 	// read-only lookup under the instance lock.
 	bool InRunningSync(RE::Actor* a_actor)
 	{
-		static REL::Relocation<std::uintptr_t*> manager{ REL::ID{ 1346879 } };
+		static REL::Relocation<std::uintptr_t*> manager{ REL::ID{ 1346879, 0, 4798289 } };
 		using isIn_t = bool (*)(std::uintptr_t, const std::uint32_t*, bool);
-		static REL::Relocation<isIn_t> isIn{ REL::ID{ 1291193 } };
+		static REL::Relocation<isIn_t> isIn{ REL::ID{ 1291193, 0, 2214404 } };
 		const auto mgr = *manager.get();
 		std::uintptr_t list = 0;
 		std::uint32_t count = 0;
@@ -215,8 +215,8 @@ namespace DynamicRagdollSystem
 
 	void InstallHitHook()
 	{
-		const auto site = REL::ID{ 1546751 }.address() + 0x921;
-		const auto target = REL::ID{ 881215 }.address();
+		const auto site = REL::ID{ 1546751, 0, 2229323 }.address() + REL::Offset{ 0x921, 0, 0x8F7 }.offset();
+		const auto target = REL::ID{ 881215, 0, 2231148 }.address();
 		std::uint8_t bytes[5]{};
 		std::int32_t rel = 0;
 		if (!SafeRead(site, bytes, 5) || bytes[0] != 0xE8 || (std::memcpy(&rel, bytes + 1, 4), site + 5 + rel != target)) {
@@ -362,38 +362,74 @@ namespace DynamicRagdollSystem
 
 	bool Hook_IsRagdollActive(void* a_graph)
 	{
-		if (reinterpret_cast<std::uintptr_t>(_ReturnAddress()) == g_graphUpdateReturn) {
+		const auto ret = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+		if (ret == g_graphUpdateReturn || ret == g_movementReturn) {
 			std::uintptr_t driver = 0;
 			if (ReadField(reinterpret_cast<std::uintptr_t>(a_graph), 0x208, driver) && driver) {
 				std::scoped_lock lock{ g_driveMutex };
-				if (g_drives.contains(driver)) return false;
+				if (const auto drive = g_drives.find(driver); drive != g_drives.end()) {
+					if (ret == g_movementReturn) {  // AE movement query (OG: Hook_MovementRagdollQuery)
+						++drive->second.movementQueries;
+						if ((*g_ragdollActiveHook)(a_graph)) ++drive->second.movementCleared;
+					}
+					return false;
+				}
 			}
 		}
 		return (*g_ragdollActiveHook)(a_graph);
 	}
 
 
-	void InstallGraphUpdateHook()
+	// `call [rax+0x98]` (graph vtable slot 19) at a_call; returns the address after it, or 0 on mismatch.
+	std::uintptr_t CheckSlot19Call(std::uintptr_t a_call)
 	{
-		static constexpr std::uint8_t callSlot19[6] = { 0xFF, 0x90, 0x98, 0x00, 0x00, 0x00 };  // call [rax+0x98]
-		const auto call = REL::Offset{ 0x161D9F4 }.address();
+		static constexpr std::uint8_t callSlot19[6] = { 0xFF, 0x90, 0x98, 0x00, 0x00, 0x00 };
 		std::uint8_t bytes[6]{};
+		if (!SafeRead(a_call, bytes, sizeof(bytes)) || std::memcmp(bytes, callSlot19, sizeof(bytes)) != 0) return 0;
+		return a_call + sizeof(bytes);
+	}
+
+
+	// Hooks graph vtable slot 19 once; callers set their return address first.
+	bool EnableRagdollActiveHook()
+	{
+		if (g_ragdollActiveHook) return true;
 		std::uintptr_t slot19 = 0;
-		if (!SafeRead(call, bytes, sizeof(bytes)) || std::memcmp(bytes, callSlot19, sizeof(bytes)) != 0 ||
-			!ReadField(RE::VTABLE::BShkbAnimationGraph[0].address(), 19 * 8, slot19) || slot19 != REL::Offset{ 0x1627BD0 }.address()) {
-			REX::INFO("DynamicRagdollSystem: graph update call site mismatch; NPCs may keep their hit-time velocity"sv);
-			return;
-		}
-		g_graphUpdateReturn = call + sizeof(bytes);
+		if (!ReadField(RE::VTABLE::BShkbAnimationGraph[0].address(), 19 * 8, slot19) ||
+			slot19 != REL::ID{ 609532, 0, 2256904 }.address()) return false;
 		static REL::THookVFT<bool(void*)> hook{ REL::Offset{ RE::VTABLE::BShkbAnimationGraph[0].offset() }, 19, &Hook_IsRagdollActive };
 		hook.Init();
 		hook.Enable();
 		g_ragdollActiveHook = &hook;
+		return true;
+	}
+
+
+	void InstallGraphUpdateHook()
+	{
+		// Graph per-frame update (ID 1273937, OG 0x14161D9A0): its "ragdoll active?" call.
+		const auto call = REL::ID{ 1273937, 0, 2256850 }.address() + REL::Offset{ 0x54, 0, 0x69 }.offset();
+		const auto ret = CheckSlot19Call(call);
+		if (!ret || !EnableRagdollActiveHook()) {
+			REX::INFO("DynamicRagdollSystem: graph update call site mismatch; NPCs may keep their hit-time velocity"sv);
+			return;
+		}
+		g_graphUpdateReturn = ret;
 	}
 
 
 	void InstallMovementHook()
 	{
+		if (REX::FModule::IsRuntimeAE()) {
+			// The visitor is inlined into the movement update: its slot-19 call is at + 0x4ED.
+			const auto ret = CheckSlot19Call(REL::ID{ 737625, 0, 2229934 }.address() + 0x4ED);
+			if (!ret || !EnableRagdollActiveHook()) {
+				REX::INFO("DynamicRagdollSystem: movement call site mismatch; NPCs will stop during reactions"sv);
+				return;
+			}
+			g_movementReturn = ret;
+			return;
+		}
 		const auto site = REL::ID{ 737625 }.address() + 0x3B8;
 		const auto target = REL::ID{ 453608 }.address();
 		std::uint8_t bytes[5]{};
@@ -409,8 +445,8 @@ namespace DynamicRagdollSystem
 	void InstallDriveToPoseHook()
 	{
 		// Call site in the behavior graph pre-physics update: ID 1348502 + 0x12F, `call driveToPose` (ID 993992).
-		const auto site = REL::ID{ 1348502 }.address() + 0x12F;
-		const auto target = REL::ID{ 993992 }.address();
+		const auto site = REL::ID{ 1348502, 0, 2256836 }.address() + REL::Offset{ 0x12F, 0, 0x144 }.offset();
+		const auto target = REL::ID{ 993992, 0, 2258034 }.address();
 		std::uint8_t bytes[5]{};
 		std::int32_t rel = 0;
 		if (!SafeRead(site, bytes, 5) || bytes[0] != 0xE8 || (std::memcpy(&rel, bytes + 1, 4), site + 5 + rel != target)) {
@@ -487,8 +523,8 @@ namespace DynamicRagdollSystem
 	void InstallPostPhysicsHook()
 	{
 		// Graph post-physics update (ID 1414229) + 0x1EA: `call hkbRagdollDriver::postPhysics` (ID 560275).
-		const auto site = REL::ID{ 1414229 }.address() + 0x1EA;
-		const auto target = REL::ID{ 560275 }.address();
+		const auto site = REL::ID{ 1414229, 0, 2256837 }.address() + REL::Offset{ 0x1EA, 0, 0x1DC }.offset();
+		const auto target = REL::ID{ 560275, 0, 2258035 }.address();
 		std::uint8_t bytes[5]{};
 		std::int32_t rel = 0;
 		if (!SafeRead(site, bytes, 5) || bytes[0] != 0xE8 || (std::memcpy(&rel, bytes + 1, 4), site + 5 + rel != target)) {
@@ -553,16 +589,16 @@ namespace DynamicRagdollSystem
 				// which is what makes the pre-physics update call driveToPose. A live NPC's ragdoll bodies are
 				// already in the world, but its graph is not enrolled until this runs. Vanilla never clears it.
 				struct AddArgs { RE::bhkWorld* world; bool flag; } args{ world, false };
-				using add_t = bool (*)(RE::BSAnimationGraphManager*, AddArgs*);
-				static REL::Relocation<add_t> addRagdoll{ REL::ID{ 683498 } };
-				auto* manager = actor->currentProcess->middleHigh->animationGraphManager.get();
-				addRagdoll(manager, &args);
+				using add_t = bool (*)(void*, AddArgs*);
+				static REL::Relocation<add_t> addRagdoll{ REL::ID{ 683498, 0, 2230588 } };
+				auto* target = GraphVisitorTarget(actor);
+				addRagdoll(target, &args);
 				// Then what the knockdown does next: graph vtable slot 3 per graph (visitor ID 258136), which
 				// re-seeds the ragdoll from the animation and registers it with the world if it is not yet.
 				bool registered = false;
-				using register_t = bool (*)(RE::BSAnimationGraphManager*, bool*);
-				static REL::Relocation<register_t> registerRagdoll{ REL::ID{ 258136 } };
-				registerRagdoll(manager, &registered);
+				using register_t = bool (*)(void*, bool*);
+				static REL::Relocation<register_t> registerRagdoll{ REL::ID{ 258136, 0, 2230583 } };
+				registerRagdoll(target, &registered);
 				std::uintptr_t graphWorld = 0;
 				ReadField(graph, 0x3B8, graphWorld);
 				REX::INFO("DynamicRagdollSystem: {:08X} driver {:X} graph world {:X} (expected {:X}) registered {}"sv,
@@ -792,9 +828,9 @@ namespace DynamicRagdollSystem
 				// Undo the registration (graph slot 3) like the engine's end-of-knockdown does: visitor ID 385024
 				// → graph slot 4 → ragdollInterface remove. Without it the NPC stays "ragdolled" and never moves again.
 				bool removed = false;
-				using remove_t = bool (*)(RE::BSAnimationGraphManager*, bool*);
-				static REL::Relocation<remove_t> removeRagdoll{ REL::ID{ 385024 } };
-				removeRagdoll(a_actor->currentProcess->middleHigh->animationGraphManager.get(), &removed);
+				using remove_t = bool (*)(void*, bool*);
+				static REL::Relocation<remove_t> removeRagdoll{ REL::ID{ 385024, 0, 2230587 } };
+				removeRagdoll(GraphVisitorTarget(a_actor), &removed);
 			}
 		}
 		{
