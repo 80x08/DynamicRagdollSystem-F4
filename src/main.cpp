@@ -22,7 +22,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 			if (a_msg && (a_msg->type == F4SE::MessagingInterface::kPreLoadGame || a_msg->type == F4SE::MessagingInterface::kNewGame)) {
 				ClearTracking();
 			}
-			// Settings are re-read whenever a save is loaded (and at game start): edit the INI, then load a save.
+			// Settings are re-read whenever a save is loaded (and at game start): edit the settings file, then load a save.
 			if (a_msg && (a_msg->type == F4SE::MessagingInterface::kPostLoadGame || a_msg->type == F4SE::MessagingInterface::kNewGame)) {
 				LoadSettings();
 			} else if (a_msg && a_msg->type == F4SE::MessagingInterface::kPreSaveGame) {

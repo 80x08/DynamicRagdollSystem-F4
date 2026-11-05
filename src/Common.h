@@ -1,7 +1,7 @@
 #pragma once
 
 // Shared types, settings, globals and function declarations. Implementations by area:
-// Settings.cpp (INI), Physics.cpp (bodies, joints, impulses), Reaction.cpp (non-lethal hit reaction),
+// Settings.cpp (TOML), Physics.cpp (bodies, joints, impulses), Reaction.cpp (non-lethal hit reaction),
 // Death.cpp (death stumble, dying phase, ground rays, grip/brace), Hooks.cpp (world update).
 
 #define WIN32_LEAN_AND_MEAN
@@ -119,7 +119,7 @@ namespace DynamicRagdollSystem
 	struct Death : Stumble
 	{
 		std::vector<BodyTarget> targets;
-		// Rolled once per death from the INI chances/ranges.
+		// Rolled once per death from the settings chances/ranges.
 		bool                    stumble{ true };
 		float                   flail{ 0.0f };     // rolled flail strength
 		float                   explosionPush{ 0.0f };  // blast velocity for a flung explosion death, 0 = none
@@ -268,7 +268,7 @@ namespace DynamicRagdollSystem
 	constexpr std::uint32_t kKnockDown = 7;   // ActorState::knockState: legless crawl (feral ghoul lost a leg): animation, no ragdoll
 	constexpr float kReferenceRate = 30.0f;  // updates/s the controller gains are tuned for
 
-	// Tunables, overridden by Data\F4SE\Plugins\DynamicRagdollSystem.ini (see LoadSettings).
+	// Tunables, overridden by Data\F4SE\Plugins\DynamicRagdollSystem.toml (see LoadSettings).
 	inline float kMinDamage = 5.0f;         // minimum damage of a single hit that triggers a reaction
 	inline bool  kReactHumanoidOnly = false;     // hit reactions only on humanoid races (creature skeletons sink: no foot bones by name)
 	inline float kCooldown = 0.1f;          // hits on the same NPC closer than this are ignored (shotgun pellets)
@@ -380,7 +380,7 @@ namespace DynamicRagdollSystem
 	inline float kImpactForce = 3.0f;             // knock force given to that NPC (engine explosion knockdown magnitude)
 	inline float kExplosionLift = 0.5f;          // upward part of the blast push, as a fraction of it
 	inline Range kDeathBraking{ 2.4f, 2.7f };     // horizontal braking of the dying body while its feet are planted, 1/s
-	inline bool  kIniHotReload = false;           // [General] bEnableIniHotReload, read at game start only
+	inline bool  kIniHotReload = false;           // [General] bEnableHotReload, read at game start only
 
 	// Death stumble controller (v0.1.x). Gains are per second; caps are torque/force, converted with dt.
 	constexpr float kJointKp = 20.0f;
@@ -674,7 +674,7 @@ namespace DynamicRagdollSystem
 	// Settings.cpp
 	bool DebugLogEnabled();
 	void LoadSettings();
-	void PollSettings(float a_now);  // bEnableIniHotReload: re-reads the INI when the file changes
+	void PollSettings(float a_now);  // bEnableHotReload: re-reads the settings file when the file changes
 
 	// Physics.cpp
 	RE::bhkWorld* GetWorld(RE::Actor* a_actor);
