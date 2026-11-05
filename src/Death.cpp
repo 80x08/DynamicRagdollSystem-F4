@@ -1291,7 +1291,10 @@ namespace DynamicRagdollSystem
 		const bool npc = a_actor && !a_actor->IsPlayerRef() && !a_actor->IsDead(false) && !InLockedAnimation(a_actor);
 		if (a_actor && !a_actor->IsPlayerRef() && !a_actor->IsDead(false))
 			if (const auto why = LockedReason(a_actor)) LogSkipOnce(a_actor, "death skipped", why);
-		const bool tracked = npc && (kDeathStumbleChance > 0.0f || kDeathGripChance > 0.0f || kTwitchChance > 0.0f || kCrawlChance > 0.0f);
+		// Stumble, grip, twitches, rolls and crawl are built for humanoid skeletons: everything else keeps the vanilla death.
+		const bool humanoid = npc && IsHumanoid(a_actor);
+		if (npc && !humanoid) LogSkipOnce(a_actor, "death skipped", "not humanoid");
+		const bool tracked = humanoid && (kDeathStumbleChance > 0.0f || kDeathGripChance > 0.0f || kTwitchChance > 0.0f || kCrawlChance > 0.0f);
 		if (npc && kDisableDeathAnimation) a_ragdollInstant = true;
 		if (tracked && IsBurning(a_actor)) {
 			std::scoped_lock lock{ g_mutex };
