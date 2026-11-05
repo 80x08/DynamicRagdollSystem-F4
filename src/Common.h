@@ -508,6 +508,17 @@ namespace DynamicRagdollSystem
 
 	inline REL::THookVFT<bool(RE::bhkWorld*, std::uint32_t)>* g_worldUpdateHook = nullptr;
 
+	// Havok's fixed step length while the step listener runs (Hooks.cpp), else 0.
+	inline float g_stepDt = 0.0f;
+
+	// Controller time step: the Havok step inside the listener, else the wall-clock gap since the last call.
+	inline float ControlDt(float& a_last, float a_now)
+	{
+		const float dt = g_stepDt > 0.0f ? g_stepDt : a_last > 0.0f ? std::clamp(a_now - a_last, 0.001f, 0.05f) : 1.0f / 60.0f;
+		a_last = a_now;
+		return dt;
+	}
+
 	struct HkArrayView
 	{
 		std::uintptr_t data{};

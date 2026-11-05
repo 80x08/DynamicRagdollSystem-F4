@@ -21,6 +21,19 @@ Everything here was found in Ghidra and confirmed in game unless marked *(inferr
 
 `bhkWorld::Update` (main thread) does **not** hold the write lock; take it before writing bodies.
 
+Step loop inside `bhkWorld::Update` `0x141D6EC00` (ID 1395106): takes the world **write** lock (unless TLS `+0x1539`),
+then runs N fixed steps: N = global `0x146542C34` (ID 1163732), step length `0x146542C1C` (ID 505537), frame time
+`0x146542C2C` (ID 944230), leftover time accumulates in `0x146542C24`. Skipped when the world is disabled or step length is 0.
+- Step listeners: `bhkWorld::m_stepListenerA` (`+0x18`, lock `+0x48`). Add with ID 137330 `0x141D72090`
+  `(bhkWorld*, bhkIWorldStepListener*)` (write-locks the list, skips duplicates). The list is emptied at the end of every
+  stepping `Update`, so the engine re-adds its char proxy / char rigid-body managers at the top of each `Update`.
+- `bhkIWorldStepListener` vtable ID 1274460 `0x142DBEDF8`: dtor + 10 slots, defaults are `ret`. Update sets listener
+  `+0x08` (deferred release array) to `0x146542C70`. Order: `+0x08/+0x10` once (begin); per step `+0x18(threads, ctx,
+  fraction, stepDt)` → listener tasks → `+0x20(fraction, stepDt)` → hknp collide `0x1414BCD90` → `+0x28/+0x30` →
+  solve `0x1414BCFC0` → `+0x38/+0x40`; then `+0x48/+0x50` once (end). fraction = i·stepDt/frameTime clamped to 1.
+  All on the main thread with the world write lock held (`try_lock_write` ID 1279453 `0x141B10BA0` is recursive for
+  the owning thread). DynamicRagdollSystem uses `+0x20`.
+
 Ground ray (verified in Ghidra): CommonLibF4's `bhkPickData` (ctor ID 526783, `HasHit` 1181584, `GetHitFraction`
 476687) plus `TESObjectCELL::Pick(bhkPickData&)` `0x1403B4AA0` (ID 434717).
 - `SetStartEnd` `0x1400266C0` (ID 747470) takes game units: it multiplies start/end by the runtime world scale global

@@ -334,8 +334,7 @@ namespace DynamicRagdollSystem
 			return nullptr;
 		};
 
-		const float dt = a_stumble.lastStep > 0.0f ? std::clamp(a_now - a_stumble.lastStep, 0.001f, 0.05f) : 1.0f / 60.0f;
-		a_stumble.lastStep = a_now;
+		const float dt = ControlDt(a_stumble.lastStep, a_now);
 		// Strength decays steadily from the moment of death, so the body buckles progressively instead of
 		// standing at full strength and dropping at the end.
 		const float fade = std::clamp((a_stumble.end - a_now) / std::max(a_stumble.end - a_stumble.start, 0.01f), 0.0f, 1.0f);
@@ -827,8 +826,7 @@ namespace DynamicRagdollSystem
 				a_down.targets.push_back({ s.ref->id.m_value, RotationFrom(worldBodies[s.ref->index].m_transform.m_rotation), s.pos });
 			return;
 		}
-		const float dt = a_down.lastStep > 0.0f ? std::clamp(a_now - a_down.lastStep, 0.001f, 0.05f) : 1.0f / 60.0f;
-		a_down.lastStep = a_now;
+		const float dt = ControlDt(a_down.lastStep, a_now);
 		const auto [low, high] = TrunkEnds(samples);  // pelvis / SPINE1, chest
 		if (!low || !high || low == high || a_down.groundFeet <= 0) return;
 
@@ -1155,8 +1153,7 @@ namespace DynamicRagdollSystem
 			samples.push_back({ &body, motion, BodyPosition(worldBodies[body.index]) });
 		}
 		if (samples.empty()) return;
-		const float dt = a_death.lastStep > 0.0f ? std::clamp(a_now - a_death.lastStep, 0.001f, 0.05f) : 1.0f / 60.0f;
-		a_death.lastStep = a_now;
+		const float dt = ControlDt(a_death.lastStep, a_now);
 		// The dying clock starts once the trunk is lying (or kDownTimeout after the stumble). Starting it at the
 		// end of the stumble spent the strongest twitches and rolls while the body was still falling.
 		if (a_death.downTime <= 0.0f) {

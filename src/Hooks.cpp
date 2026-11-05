@@ -3,6 +3,13 @@
 namespace DynamicRagdollSystem
 {
 
+	// Burn-down: StepDeath only scans the bodies; go to the dying phase (writhing) right after.
+	static bool InDeathStumble(const Death& a_death, float a_now)
+	{
+		return a_now < a_death.end && !(a_death.burnDown && !a_death.joints.empty());
+	}
+
+
 	void OnWorldUpdate(RE::bhkWorld* a_world)
 	{
 		const float now = NowSeconds();
@@ -121,15 +128,14 @@ namespace DynamicRagdollSystem
 					it = g_deaths.erase(it);
 					continue;
 				}
+				// Rays here, once per frame: the pick takes the world read lock, which the step listener can't (the
+				// engine holds the write lock there). StepDeath/StepDying run per Havok step in OnHavokStep.
 				if (GetWorld(actor) == a_world) {
-					// Burn-down: StepDeath only scans the bodies; go to the dying phase (writhing) right after.
-					if (now < it->end && !(it->burnDown && !it->joints.empty())) {
+					if (InDeathStumble(*it, now)) {
 						UpdateGround(*it, actor, a_world);
-						StepDeath(*it, actor, now);
 					} else {
 						if (it->downTime <= 0.0f) UpdateGround(*it, actor, a_world);  // the brace needs the ground while it falls
 						else if (it->crawlRolled && !it->crawlDecided && !it->headOffBefore && !it->headShotKill) CastCrawlRay(*it, actor, a_world);  // face-down check
-						StepDying(*it, actor, now);
 					}
 				}
 				++it;
@@ -144,10 +150,7 @@ namespace DynamicRagdollSystem
 					it = g_knockdowns.erase(it);
 					continue;
 				}
-				if (GetWorld(actor) == a_world) {
-					UpdateGround(*it, actor, a_world);
-					StepKnockdown(*it, actor, now);
-				}
+				if (GetWorld(actor) == a_world) UpdateGround(*it, actor, a_world);  // StepKnockdown: OnHavokStep
 				++it;
 			}
 		}
@@ -179,9 +182,74 @@ namespace DynamicRagdollSystem
 	}
 
 
+	// Death/knockdown controllers, once per Havok step (fixed length, several per frame at low fps) instead of once
+	// per frame. Main thread, world write lock held by the engine; g_mutex is free (OnWorldUpdate has returned).
+	void OnHavokStep(RE::bhkWorld* a_world, float a_dt)
+	{
+		const float now = NowSeconds();
+		static bool logged = false;
+		if (!logged) {
+			logged = true;
+			REX::INFO("DynamicRagdollSystem: controllers run per Havok step ({:.4f}s)"sv, a_dt);
+		}
+		g_stepDt = a_dt;
+		{
+			std::scoped_lock lock{ g_mutex };
+			for (auto& death : g_deaths) {
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(death.formID);
+				if (!actor || GetWorld(actor) != a_world) continue;
+				if (InDeathStumble(death, now)) StepDeath(death, actor, now);
+				else StepDying(death, actor, now);
+			}
+			for (auto& down : g_knockdowns) {
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(down.formID);
+				if (actor && GetWorld(actor) == a_world) StepKnockdown(down, actor, now);
+			}
+		}
+		g_stepDt = 0.0f;
+	}
+
+
+	// Matches the bhkIWorldStepListener vtable (base ID 1274460: dtor + 10 slots, default `ret`). bhkWorld::Update
+	// (0x141D6EC00) calls the listeners per step: +0x18 (then their queued tasks), +0x20(fraction, stepDt), hknp collide
+	// 0x1414BCD90, +0x28/+0x30, solve 0x1414BCFC0, +0x38/+0x40. Only +0x20 is used: before collide/solve.
+	struct HavokStepListener
+	{
+		virtual ~HavokStepListener() = default;
+		virtual void FrameBegin() {}      // +0x08
+		virtual void FrameBeginDone() {}  // +0x10
+		virtual void StepTasks() {}       // +0x18
+		virtual void PreStep(float, float a_dt) { OnHavokStep(world, a_dt); }  // +0x20
+		virtual void Slot5() {}
+		virtual void Slot6() {}
+		virtual void Slot7() {}
+		virtual void Slot8() {}
+		virtual void FrameEnd() {}  // +0x48
+		virtual void FrameEndDone() {}
+
+		void*         deferredReleaseColObjs{};  // +0x08, set by bhkWorld::Update
+		RE::bhkWorld* world{};
+	};
+
+
+	// The world empties its listener list after each step loop, so add ours every frame (ID 137330 `0x141D72090`:
+	// takes the list lock, skips duplicates). One listener per world: a world that does not step keeps its list.
+	void AddStepListener(RE::bhkWorld* a_world)
+	{
+		using Add = void (*)(RE::bhkWorld*, HavokStepListener*);
+		static const auto add = reinterpret_cast<Add>(REL::ID{ 137330 }.address());
+		// shortcut: never freed; one small entry per world pointer the game ever steps.
+		static std::unordered_map<RE::bhkWorld*, HavokStepListener> listeners;
+		auto& listener = listeners[a_world];
+		listener.world = a_world;
+		add(a_world, &listener);
+	}
+
+
 	bool Hook_WorldUpdate(RE::bhkWorld* a_world, std::uint32_t a_flags)
 	{
 		OnWorldUpdate(a_world);
+		AddStepListener(a_world);
 		return (*g_worldUpdateHook)(a_world, a_flags);
 	}
 
@@ -194,6 +262,7 @@ namespace DynamicRagdollSystem
 			REX::INFO("DynamicRagdollSystem: exterior physics world (bhkWorldM) update hooked"sv);
 		}
 		OnWorldUpdate(a_world);
+		AddStepListener(a_world);
 		return (*g_worldMUpdateHook)(a_world, a_flags);
 	}
 
