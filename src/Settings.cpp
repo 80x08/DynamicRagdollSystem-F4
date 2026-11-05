@@ -16,6 +16,10 @@ bDebugLog=1
 bEnableIniHotReload=0
 
 [Reaction]
+; 1 = hit reactions only on humans, ghouls, feral ghouls and super mutants. Creatures (dogs, molerats,
+; deathclaws, ...) have no bones the mod recognises as feet, so their legs can sink through the floor.
+; 0 = all races.
+bHumanoidOnly=0
 ; Minimum damage of a single hit that triggers a reaction. Range 0-10000.
 fMinDamage=5.0
 ; Hits on the same NPC closer together than this (seconds) are ignored, e.g. shotgun pellets. Range 0-60.
@@ -270,6 +274,7 @@ fCrawlTurnTime=3.0
 			const float value = std::strtof(buffer, &end);
 			if (end != buffer && std::isfinite(value)) a_value = std::clamp(value, a_min, a_max);
 		};
+		kReactHumanoidOnly = GetPrivateProfileIntA("Reaction", "bHumanoidOnly", kReactHumanoidOnly ? 1 : 0, path) != 0;
 		read("fMinDamage", kMinDamage, 0.0f, 10000.0f);
 		read("fCooldown", kCooldown, 0.0f, 60.0f);
 		read("fReactionTime", kReactionTime, 0.2f, 10.0f);

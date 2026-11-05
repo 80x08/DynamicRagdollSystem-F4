@@ -267,6 +267,7 @@ namespace DynamicRagdollSystem
 
 	// Tunables, overridden by Data\F4SE\Plugins\DynamicRagdollSystem.ini (see LoadSettings).
 	inline float kMinDamage = 5.0f;         // minimum damage of a single hit that triggers a reaction
+	inline bool  kReactHumanoidOnly = false;     // hit reactions only on humanoid races (creature skeletons sink: no foot bones by name)
 	inline float kCooldown = 0.1f;          // hits on the same NPC closer than this are ignored (shotgun pellets)
 	inline float kReactionTime = 1.5f;      // how long the ragdoll is physical after a hit
 	inline float kHitSoftness = 0.1f;       // controller gains right after the hit, as a fraction of the engine defaults

@@ -118,6 +118,10 @@ namespace DynamicRagdollSystem
 			a_hit.totalDamage < kMinDamage) {
 			return false;
 		}
+		if (kReactHumanoidOnly && !IsHumanoid(a_actor)) {
+			LogSkipOnce(a_actor, "hit skipped", "not humanoid (bHumanoidOnly)");
+			return false;
+		}
 		if (a_actor->lifeState != static_cast<std::uint32_t>(RE::ACTOR_LIFE_STATE::kAlive)) {
 			LogSkipOnce(a_actor, "hit skipped", std::format("life state {}", static_cast<std::uint32_t>(a_actor->lifeState)));
 			return false;
