@@ -86,6 +86,9 @@ fBurnDownRoll = 1.2
 # Seconds between those rolls, picked at random in this range. Range 0.1-30.
 fBurnDownRollIntervalMin = 0.4
 fBurnDownRollIntervalMax = 0.8
+# true = burn rolls (burning on the ground, burned to death) also swing the arms with the trunk; false = the arms
+# follow the shoulders.
+bBurnRollArms = true
 # Seconds after a burning body (knocked down, or burned to death) is down before it starts rolling. Range 0-10.
 fBurnRollDelay = 0.0
 # Seconds without fire before it may get up (fire effects can drop out for a moment between hits). Range 0-10.
@@ -165,6 +168,11 @@ fTwitchStrengthMax = 2.5
 # Strength of the dying rolls (the body turning onto its side/back). Range 0-3.
 fRollStrengthMin = 0.5
 fRollStrengthMax = 1.5
+# How hard a dying roll turns the trunk (rad/s^2 at roll strength 1). Also the crawl turn-over. Range 0-1000.
+fRollAccel = 160.0
+# true = dying rolls also swing the arms with the trunk (can fling a hand and drag the body over); false = the arms
+# follow the shoulders.
+bDeathRollArms = false
 # Seconds after the body is down before its twitches and rolls start. Range 0-10.
 fTwitchDelay = 0.0
 # How quickly a dying body that is still on its feet loses its momentum (higher = stops sooner, lower = glides
@@ -202,7 +210,7 @@ bRagdollSelfCollision = true
 # Chance a dying body crawls instead of twitching and rolling, if it lies face down when the dying phase starts
 # (otherwise fTwitchChance decides as usual). Never after a head shot or for burned deaths. Lasts fCrawlTime;
 # fDyingEndDamage and bDyingEndOnHeadLoss end it early too. Range 0-1.
-fCrawlChance = 0.5
+fCrawlChance = 0.3
 # Forward speed the crawl reaches during each pull (physics units/s; running is about 4-5). Range 0-5.
 fCrawlSpeed = 0.7
 # Seconds for one reach-and-pull of an arm (the arms alternate, half of it apart). Lower = faster crawl. Range 0.4-5.
@@ -344,6 +352,7 @@ fCrawlTurnTime = 3.0
 		{
 			const auto readBurn = [&](const char* a_key, float& a_value, float a_min, float a_max) { ReadFloat(root, "Burning", a_key, a_value, a_min, a_max); };
 			ReadBool(root, "Burning", "bBurnReaction", kBurnReaction);
+		ReadBool(root, "Burning", "bBurnRollArms", kBurnRollArms);
 			readBurn("fBurnStiffness", kBurnStiffness, 0.0f, 1.0f);
 			readBurn("fBurnArmStiffness", kBurnArmStiffness, 0.0f, 1.0f);
 			readBurn("fBurnFlail", kBurnFlail, 0.0f, 3.0f);
@@ -398,6 +407,8 @@ fCrawlTurnTime = 3.0
 		readRange("fDyingTime", kDyingTime, 0.0f, 30.0f);
 		readRange("fTwitchStrength", kTwitchStrength, 0.0f, 3.0f);
 		readRange("fRollStrength", kRollStrength, 0.0f, 3.0f);
+		readDeath("fRollAccel", kRollAccel, 0.0f, 1000.0f);
+		ReadBool(root, "Death", "bDeathRollArms", kDeathRollArms);
 		readRange("fDeathBraking", kDeathBraking, 0.0f, 20.0f);
 		readRange("fFlailStrength", kFlailStrength, 0.0f, 3.0f);
 		readDeath("fExplosionStumbleChance", kExplosionStumbleChance, 0.0f, 1.0f);
@@ -455,9 +466,9 @@ fCrawlTurnTime = 3.0
 		REX::INFO("DynamicRagdollSystem: crawl tuning: pushAccel {} reach {} side {} lift {} elbow {} arm {} maxHeight {} stall {} minPlant {} ankle {} hip {} knee {} headTurn {} headLift {} limbAccel {} limbTorque {} turnTime {}"sv,
 			kCrawlAccel, kCrawlReach, kCrawlSide, kCrawlLift, kCrawlElbow, kCrawlArmStrength, kCrawlArmMaxHeight, kCrawlStall, kCrawlMinPlant,
 			kCrawlAnkleAccel, kCrawlHipSpeed, kCrawlKneeSpeed, kCrawlHeadTurn, kCrawlHeadLift, kCrawlLimbAccel, kCrawlLimbMaxTorque, kCrawlTurnTime);
-		REX::INFO("DynamicRagdollSystem: death ranges: time {}-{} support {}-{} upright {}-{} dying {}-{} twitch {}-{} roll {}-{} braking {}-{}"sv,
+		REX::INFO("DynamicRagdollSystem: death ranges: time {}-{} support {}-{} upright {}-{} dying {}-{} twitch {}-{} roll {}-{} (accel {}) braking {}-{}"sv,
 			kDeathStumbleTime.min, kDeathStumbleTime.max, kDeathSupport.min, kDeathSupport.max, kDeathUpright.min, kDeathUpright.max,
-			kDyingTime.min, kDyingTime.max, kTwitchStrength.min, kTwitchStrength.max, kRollStrength.min, kRollStrength.max,
+			kDyingTime.min, kDyingTime.max, kTwitchStrength.min, kTwitchStrength.max, kRollStrength.min, kRollStrength.max, kRollAccel,
 			kDeathBraking.min, kDeathBraking.max);
 	}
 

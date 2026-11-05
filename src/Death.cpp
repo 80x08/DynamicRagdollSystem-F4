@@ -872,7 +872,7 @@ namespace DynamicRagdollSystem
 	// Whole-body roll about the trunk's long axis (pelvis → chest, through the trunk centre) at a_accel rad/s^2
 	// (sign = direction). Every body gets the velocity of the rig rotating about the axis; torquing only the trunk
 	// could not turn the limbs hanging off it. False (nothing applied) unless the trunk lies flat.
-	bool RollTrunk(RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_accel)
+	bool RollTrunk(RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_accel, bool a_armsRoll = false)
 	{
 		const auto [low, high] = TrunkEnds(samples);  // pelvis / SPINE1, chest
 		if (!low || !high || low == high) return false;
@@ -888,8 +888,8 @@ namespace DynamicRagdollSystem
 			if (const float n = Length(deltaV); n > cap) deltaV = Scale(deltaV, cap / n);
 			// Legs are only dragged along by the hips: no lift and no spin of their own. Limp legs given the
 			// full rigid-body roll kept flying up after the burst. Arms too: an outstretched hand (far from the axis,
-			// light) was flung first and dragged the body over by the shoulder.
-			const bool limb = sample.ref->leg || sample.ref->arm;
+			// light) was flung first and dragged the body over by the shoulder. a_armsRoll (bBurnRollArms / bDeathRollArms) keeps the old arm drive.
+			const bool limb = sample.ref->leg || (sample.ref->arm && !a_armsRoll);
 			if (limb) deltaV.z = std::min(deltaV.z, 0.0f);
 			const auto impulse = Scale(deltaV, 1.0f / sample.motion.inverseMass);
 			RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
@@ -1290,7 +1290,9 @@ namespace DynamicRagdollSystem
 			a_death.rollSign = unit(rng) < 0.5f ? -1.0f : 1.0f;
 			a_death.rollApplied = false;
 		}
-		if (roll > 0.0f && a_now < a_death.rollEnd && RollTrunk(npWorld, samples, dt, a_death.rollSign * kRollAccel * roll) &&
+		const bool fire = a_death.burnDown || a_death.burnedToDeath;
+		if (roll > 0.0f && a_now < a_death.rollEnd &&
+			RollTrunk(npWorld, samples, dt, a_death.rollSign * (fire ? kBurnRollAccel : kRollAccel) * roll, fire ? kBurnRollArms : kDeathRollArms) &&
 			!a_death.rollApplied) {
 			a_death.rollApplied = true;
 			++a_death.rollCount;

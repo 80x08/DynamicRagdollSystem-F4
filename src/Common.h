@@ -340,7 +340,7 @@ namespace DynamicRagdollSystem
 	inline float kDyingEndDamage = 20.0f;         // damage to the corpse during the dying phase that ends it (0 = off)
 	inline bool  kDyingEndOnHeadLoss = true;      // head dismembered during the dying phase ends it
 	inline float kHeadlessRollScale = 0.5f;       // roll strength factor when the dying phase starts without a head
-	inline float kCrawlChance = 0.5f;             // chance a body lying face down crawls instead of twitching (wins over kTwitchChance)
+	inline float kCrawlChance = 0.3f;             // chance a body lying face down crawls instead of twitching (wins over kTwitchChance)
 	inline float kCrawlInterval = 2.4f;           // s: one reach + pull of an arm; the arms are half of it apart
 	inline float kCrawlSpeed = 0.7f;              // peak forward speed of the body nudge while an arm pulls, physics units/s
 	inline float kCrawlAccel = 40.0f;             // cap on the body nudge, units/s^2 (the dragged legs and arms add friction)
@@ -445,7 +445,10 @@ namespace DynamicRagdollSystem
 	constexpr float kDownTimeout = 1.5f;       // dying clock starts at the latest this long after the stumble
 	// Rolling a body lying on its back onto its side lifts its weight about the shoulder edge: ~35–40 rad/s^2
 	// is needed just to balance gravity, so the roll must be well above that.
-	constexpr float kRollAccel = 80.0f;        // rad/s^2 at fRollStrength 1; ~90–100° per roll
+	constexpr float kBurnRollAccel = 80.0f;    // burn rolls keep the pre-0.4.121 strength (tuned with the arms driven)
+	inline bool kBurnRollArms = true;          // burn rolls drive the arms with the trunk (pre-0.4.121 roll)
+	inline bool kDeathRollArms = false;        // same for ordinary dying rolls
+	inline float kRollAccel = 160.0f;          // rad/s^2 at fRollStrength 1 (fRollAccel); arms follow, so higher than the old 80
 	constexpr float kRollGap = 1.0f;           // s between rolls of the dying: gap .. 2 x gap
 	constexpr float kRollBurst = 0.3f;         // s: long enough that ground friction cannot cancel it
 	constexpr float kRollMaxAccel = 150.0f;    // per-body velocity change cap during a roll, units/s^2
