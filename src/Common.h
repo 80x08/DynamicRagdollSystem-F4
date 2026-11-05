@@ -718,6 +718,7 @@ namespace DynamicRagdollSystem
 	void LogSkipOnce(RE::Actor* a_actor, std::string_view a_where, std::string_view a_why);
 	bool IsBurning(RE::Actor* a_actor, std::string* a_why = nullptr);  // a_why: which effect matched, for the log
 	bool IsHumanoid(RE::Actor* a_actor);
+	bool IsReallyDead(RE::Actor* a_actor);
 	void ScanForBurning(float a_now);
 	void ScanForKnockdowns(float a_now);
 	void StepKnockdown(Death& a_down, RE::Actor* a_actor, float a_now);

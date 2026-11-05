@@ -1312,10 +1312,11 @@ namespace DynamicRagdollSystem
 		}
 		(*g_killHook)(a_actor, a_attacker, a_damage, a_sendEvent, a_ragdollInstant);
 		std::scoped_lock lock{ g_mutex };
-		if (tracked && a_actor->IsDead(false)) {
+		if (tracked && IsReallyDead(a_actor)) {
 			g_pendingDeaths.push_back(a_actor->GetFormID());
 		} else if (tracked) {
-			g_deathMoveVel.erase(a_actor->GetFormID());  // did not die after all (e.g. essential): no leftover entry
+			if (a_actor->IsDead(false)) LogSkipOnce(a_actor, "death skipped", std::format("essential, downed (life state {})", static_cast<std::uint32_t>(a_actor->lifeState)));
+			g_deathMoveVel.erase(a_actor->GetFormID());  // did not die after all (essential): no leftover entry
 			std::erase(g_burningDeaths, a_actor->GetFormID());
 		}
 	}

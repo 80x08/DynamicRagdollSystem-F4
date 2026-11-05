@@ -780,7 +780,8 @@ namespace DynamicRagdollSystem
 		// Back to animation-following bodies, unless the engine took over (death or knockdown ragdoll). Needs the
 		// world lock; if it is busy, try again next frame (writing bodies unlocked, or skipping the undo, both break).
 		// The legless crawl (kKnockDown) is animation: left dynamic, the ghoul sank through the floor.
-		if (a_actor && !a_actor->IsDead(false) && (a_actor->knockState == 0 || a_actor->knockState == kKnockDown)) {
+		// A downed essential (IsReallyDead) is animated too: left dynamic, it fell through the floor.
+		if (a_actor && !IsReallyDead(a_actor) && (a_actor->knockState == 0 || a_actor->knockState == kKnockDown)) {
 			auto* world = GetWorld(a_actor);
 			auto* npWorld = world ? world->m_worldNP.get() : nullptr;
 			if (auto* root = a_actor->Get3D(); root && npWorld && a_actor->currentProcess && a_actor->currentProcess->middleHigh) {
@@ -857,6 +858,16 @@ namespace DynamicRagdollSystem
 		return (race->HasKeywordID(kHuman) || race->HasKeywordID(kGhoul) || race->HasKeywordID(kFeral) ||
 		           race->HasKeywordID(kMutant)) &&
 		       !race->HasKeywordID(kRobot) && !race->HasKeywordID(kChild);
+	}
+
+	// IsDead(false) is also true for a downed essential NPC (companion waiting for a stimpak: lifeState 7, an animated
+	// bleedout pose). That one is alive: its ragdoll must go back to the animation, and it gets no death handling.
+	bool IsReallyDead(RE::Actor* a_actor)
+	{
+		using State = RE::ACTOR_LIFE_STATE;
+		const auto state = a_actor->lifeState;
+		return a_actor->IsDead(false) && !a_actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kEssential) &&
+		       state != static_cast<std::uint32_t>(State::kEssentialDown) && state != static_cast<std::uint32_t>(State::kBleedout);
 	}
 
 	// Living NPCs the engine ragdolled (knock state set, not getting up) get a knockdown entry: brace / flail.
