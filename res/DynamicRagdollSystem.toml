@@ -1,18 +1,14 @@
-# DynamicRagdollSystem settings. Read at game start and again whenever a save is loaded (bDebugLog and
-# bEnableHotReload only at game start).
-# Values outside the allowed range are clamped. Missing values use the defaults shown.
+
+# Values outside the allowed range are clamped. Missing values use defaults.
 
 [General]
 # true = write diagnostic messages to DynamicRagdollSystem.log. Only read at game start.
 bDebugLog = true
 # true = re-read this file about once a second whenever it is saved, so changes apply without loading a save.
-# false = only at game start
 bEnableHotReload = false
 
 [Reaction]
-# true = hit reactions only on humans, ghouls, feral ghouls and super mutants. Creatures (dogs, molerats,
-# deathclaws, ...) have no bones the mod recognises as feet, so their legs can sink through the floor.
-# false = all races.
+# true = hit reactions only on humans, ghouls, feral ghouls and super mutants.
 bHumanoidOnly = false
 # Minimum damage of a single hit that triggers a reaction. Range 0-10000.
 fMinDamage = 5.0
@@ -55,8 +51,7 @@ fAttackCatchUpSpeed = 9.0
 # true = living humanoid NPCs (humans, ghouls, super mutants) on fire stop attacking, flail their arms and stagger
 # around until the fire goes out. Detects base-game fire (flamer, Shishkebab, incendiary, Molotov, fire hazards).
 bBurnReaction = true
-# Body stiffness while burning, as a fraction of normal (lower = more wobbly; the NPC keeps its own animation).
-# Range 0-1.
+# Body stiffness while burning, as a fraction of normal (lower = more wobbly; the NPC keeps its own animation). Range 0-1.
 fBurnStiffness = 0.3
 # Arm stiffness while burning (near 0 = arms free to flail). Range 0-1.
 fBurnArmStiffness = 0.5
@@ -72,21 +67,20 @@ fBurnShoveIntervalMax = 1.2
 fBurnFallTimeMin = 2.0
 fBurnFallTimeMax = 4.0
 # Force of the fall (the engine's explosion knockdown push; it lies down and gets up by itself). Range 0-1000.
-fBurnFallForce = 3.0
+fBurnFallForce = 2.5
 # Burning NPC on the ground: strength of its rolls. 0 = no rolling. Range 0-3.
 fBurnDownRoll = 1.2
 # Seconds between those rolls, picked at random in this range. Range 0.1-30.
 fBurnDownRollIntervalMin = 0.4
 fBurnDownRollIntervalMax = 0.8
-# true = burn rolls (burning on the ground, burned to death) also swing the arms with the trunk; false = the arms
-# follow the shoulders.
+# true = burn rolls (burning on the ground, burned to death) also swing the arms with the trunk; false = the arms follow the shoulders.
 bBurnRollArms = true
 # Seconds after a burning body (knocked down, or burned to death) is down before it starts rolling. Range 0-10.
 fBurnRollDelay = 0.0
 # Seconds without fire before it may get up (fire effects can drop out for a moment between hits). Range 0-10.
 fBurnOutGrace = 1.0
 # Longest it is kept on the ground, even if it keeps burning (fire hazards). Range 1-600.
-fBurnDownMaxTime = 60.0
+fBurnDownMaxTime = 45.0
 # NPCs that die while on fire writhe with their own twitch and roll strengths (picked per death), instead of the
 # [Death] fTwitchStrength/fRollStrength, and regardless of fTwitchChance. Both 0 = no writhing. Range 0-3.
 fBurnDeathTwitchMin = 2.6
@@ -107,7 +101,7 @@ bDisableDeathAnimation = true
 # Chance the dead body tries to stay up for a moment (balance, stepping) before it collapses.
 fDeathStumbleChance = 1.0
 # Chance one hand clutches the body part the killing shot hit, while stumbling and after falling.
-fDeathGripChance = 0.75
+fDeathGripChance = 0.7
 # Chance the body twitches and rolls on the ground after it falls.
 fTwitchChance = 0.8
 # Seconds the dead body fights to stay up; its strength decays steadily over this time. Range 0.2-15.
@@ -132,7 +126,7 @@ fDeathKnockbackScale = 0.4
 # Killing hits with at least this much damage blow the body away instead of stumbling (e.g. a Gauss rifle): full
 # weapon knockback, no balance help, limbs flail in the air. The knockback log line shows each kill's damage.
 # 0 = off. Range 0-100000.
-fDeathFlingDamage = 100.0
+fDeathFlingDamage = 75.0
 # Damage a dying body (clutching/twitching/rolling after the stumble) takes before it goes limp at once, summed over
 # hits. 0 = off. Range 0-10000.
 fDyingEndDamage = 20.0
@@ -162,8 +156,7 @@ fRollStrengthMin = 0.5
 fRollStrengthMax = 1.5
 # How hard a dying roll turns the trunk (rad/s^2 at roll strength 1). Also the crawl turn-over. Range 0-1000.
 fRollAccel = 160.0
-# true = dying rolls also swing the arms with the trunk (can fling a hand and drag the body over); false = the arms
-# follow the shoulders.
+# true = dying rolls also swing the arms with the trunk (can fling a hand and drag the body over); false = the arms follow the shoulders.
 bDeathRollArms = false
 # Seconds after the body is down before its twitches and rolls start. Range 0-10.
 fTwitchDelay = 0.0
