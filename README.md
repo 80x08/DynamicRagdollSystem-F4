@@ -1,5 +1,5 @@
 # DynamicRagdollSystem
-
+MOD PAGE: [https://www.nexusmods.com/fallout4/mods/110971](https://www.nexusmods.com/fallout4/mods/110971)
 F4SE plugin for Fallout 4 1.10.163 (OG), built with [CommonLibF4](https://github.com/Dear-Modding-FO4/commonlibf4)
 and xmake.
 
