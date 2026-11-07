@@ -429,7 +429,9 @@ namespace DynamicRagdollSystem
 			const auto& first = a_world->m_bodyManager.m_bodies[a_stumble.bodies.front().index];
 			REX::INFO("DynamicRagdollSystem: ragdoll body collision layer {} (filter {:08X})"sv,
 				first.m_collisionFilterInfo & 0x7F, first.m_collisionFilterInfo);
-			LearnArmTorsoParts(a_stumble, a_world);
+			// Humanoids only: the part table is shared by every ragdoll, and creature "Arm"/"Hand" bones added pairs
+			// that made other ragdolls' bodies collide with themselves.
+			if (IsHumanoid(a_actor)) LearnArmTorsoParts(a_stumble, a_world);
 		}
 		REX::INFO("DynamicRagdollSystem: ragdoll map bones {} bodies {} dynamic {} joints {}"sv,
 			map.boneCount, map.bodyCount, a_stumble.bodies.size(), a_stumble.joints.size());
