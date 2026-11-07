@@ -101,7 +101,8 @@ namespace DynamicRagdollSystem
 			return Rotate(Transpose(RotationFrom(a_body.m_transform.m_rotation)), Sub(a_world, BodyPosition(a_body)));
 		};
 		std::int32_t fitted = 0, failed = 0;
-		float worst = 0.0f;
+		float worst = 0.0f, skipped = 0.0f;
+		const bool humanoid = IsHumanoid(a_actor);
 		for (std::uint32_t i = 0; i < map.constraintCount; ++i) {
 			const auto id = map.constraintIDs[i];
 			if (id >= capacity) continue;
@@ -128,6 +129,15 @@ namespace DynamicRagdollSystem
 			}
 			// Adults (and an already fitted copy) meet within keyframe lag; child-sized skeletons were ~12 %.
 			if (span < 1.0e-3f || gap < 0.08f * span) continue;
+			// Fitting is for resized human skeletons: creature joints are never rewritten (the ant's fitted joints
+			// stayed on the corpse and it spun forever). Small creature gaps (fog crawler) are left as they are;
+			// a large one (ant: 131%) means the ragdoll does not match: no reactions.
+			// shortcut: 50% limit is a guess between those two; adjust from the "creature joints" log line.
+			if (!humanoid) {
+				skipped = std::max(skipped, gap / span);
+				if (gap > 0.5f * span) ++failed;
+				continue;
+			}
 			const auto worldA = toWorld(bodies[i0], a);
 			const auto worldB = toWorld(bodies[i1], b);
 			const auto type = *reinterpret_cast<const std::uintptr_t*>(data);
@@ -161,6 +171,9 @@ namespace DynamicRagdollSystem
 		if (fitted || failed)
 			REX::INFO("DynamicRagdollSystem: {:08X} ragdoll joints fitted to its skeleton: {} (worst gap {:.0f}% of the pivot), {} not fitted"sv,
 				a_actor->GetFormID(), fitted, worst * 100.0f, failed);
+		if (skipped > 0.0f)
+			REX::INFO("DynamicRagdollSystem: {:08X} creature joints left unfitted, worst gap {:.0f}% of the pivot{}"sv,
+				a_actor->GetFormID(), skipped * 100.0f, failed ? " (over 50%: no reactions)" : "");
 		return failed == 0;
 	}
 
@@ -216,11 +229,11 @@ namespace DynamicRagdollSystem
 		std::uintptr_t skeleton = 0;
 		HkArrayView bodyIDs{}, constraintIDs{}, boneToBody{}, parents{}, bones{};
 		if (!ReadField(ragdoll, 0x40, skeleton) || !skeleton ||
-			!ReadHkArray(ragdoll, 0x20, 64, bodyIDs) ||
-			!ReadHkArray(ragdoll, 0x30, 64, constraintIDs) ||
-			!ReadHkArray(ragdoll, 0x48, 64, boneToBody) ||
-			!ReadHkArray(skeleton, 0x18, 64, parents) ||
-			!ReadHkArray(skeleton, 0x28, 64, bones) ||
+			!ReadHkArray(ragdoll, 0x20, kMaxRagdollBones, bodyIDs) ||
+			!ReadHkArray(ragdoll, 0x30, kMaxRagdollBones, constraintIDs) ||
+			!ReadHkArray(ragdoll, 0x48, kMaxRagdollBones, boneToBody) ||
+			!ReadHkArray(skeleton, 0x18, kMaxRagdollBones, parents) ||
+			!ReadHkArray(skeleton, 0x28, kMaxRagdollBones, bones) ||
 			bodyIDs.size == 0 || boneToBody.size != parents.size || parents.size != bones.size) {
 			return false;
 		}
@@ -260,14 +273,14 @@ namespace DynamicRagdollSystem
 
 		// Recheck all array descriptors after copying their payloads to reject a changed ragdoll map.
 		HkArrayView bodyIDs2{}, constraintIDs2{}, boneToBody2{}, parents2{}, bones2{};
-		std::array<std::uint32_t, 64> bodyIDsCopy{}, constraintIDsCopy{};
-		std::array<std::int32_t, 64> boneToBodyCopy{};
-		std::array<std::int16_t, 64> parentsCopy{};
-		return ReadHkArray(ragdoll, 0x20, 64, bodyIDs2) &&
-			ReadHkArray(ragdoll, 0x30, 64, constraintIDs2) &&
-			ReadHkArray(ragdoll, 0x48, 64, boneToBody2) &&
-			ReadHkArray(skeleton, 0x18, 64, parents2) &&
-			ReadHkArray(skeleton, 0x28, 64, bones2) &&
+		std::array<std::uint32_t, kMaxRagdollBones> bodyIDsCopy{}, constraintIDsCopy{};
+		std::array<std::int32_t, kMaxRagdollBones> boneToBodyCopy{};
+		std::array<std::int16_t, kMaxRagdollBones> parentsCopy{};
+		return ReadHkArray(ragdoll, 0x20, kMaxRagdollBones, bodyIDs2) &&
+			ReadHkArray(ragdoll, 0x30, kMaxRagdollBones, constraintIDs2) &&
+			ReadHkArray(ragdoll, 0x48, kMaxRagdollBones, boneToBody2) &&
+			ReadHkArray(skeleton, 0x18, kMaxRagdollBones, parents2) &&
+			ReadHkArray(skeleton, 0x28, kMaxRagdollBones, bones2) &&
 			SafeRead(bodyIDs2.data, bodyIDsCopy.data(), bodyIDs2.size * sizeof(std::uint32_t)) &&
 			SafeRead(constraintIDs2.data, constraintIDsCopy.data(), constraintIDs2.size * sizeof(std::uint32_t)) &&
 			SafeRead(boneToBody2.data, boneToBodyCopy.data(), boneToBody2.size * sizeof(std::int32_t)) &&

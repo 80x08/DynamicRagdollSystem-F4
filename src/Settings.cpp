@@ -104,7 +104,7 @@ fBurnDeathTimeMax = 10.0
 # Each death rolls its own values: chances are 0-1 (0 = never, 1 = always), and each Min/Max pair picks a
 # random value in between (set both the same for a fixed value).
 
-# true = NPCs skip the vanilla death animation and go straight to the death ragdoll.
+# true = NPCs skip the vanilla death animation and go straight to the death ragdoll (creatures whose ragdoll does not fit their skeleton keep it).
 bDisableDeathAnimation = true
 # Chance the dead body tries to stay up for a moment (balance, stepping) before it collapses.
 fDeathStumbleChance = 1.0

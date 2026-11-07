@@ -10,6 +10,7 @@
 #include <intrin.h>
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -311,7 +312,7 @@ namespace DynamicRagdollSystem
 	inline float kBurnDeathRollMax = 1.8f;
 	inline float kBurnDeathTimeMin = 6.0f;    // ... and how long it writhes (dying phase seconds)
 	inline float kBurnDeathTimeMax = 10.0f;
-	inline bool  kDisableDeathAnimation = true;  // NPC deaths go straight to ragdoll (KillImpl ragdollInstant)
+	inline bool  kDisableDeathAnimation = true;  // deaths go straight to ragdoll (KillImpl ragdollInstant), except creatures failing the joint check
 	// Per-death random range: each death rolls a value in [min, max].
 	struct Range
 	{
@@ -477,6 +478,10 @@ namespace DynamicRagdollSystem
 	inline std::unordered_map<RE::TESFormID, LastHit> g_lastHit;  // most recent hit per NPC, for the killing push
 
 	// Read by the driveToPose hook (behavior-graph threads), written by the main thread.
+	// Most ragdoll bones/bodies handled (fog crawler: 65). The engine has no such limit; arrays here are fixed.
+	constexpr std::int32_t kMaxRagdollBones = 128;
+	using BoneMask = std::bitset<kMaxRagdollBones>;
+
 	struct DriveState
 	{
 		RE::TESFormID formID{};
@@ -491,8 +496,8 @@ namespace DynamicRagdollSystem
 		bool          attackLogged{ false };  // logged a reaction during a melee attack
 		bool          burning{ false };       // on fire: fixed loose stiffness, arms on their own soft entry
 		float         burnProgress{ 0.0f };   // 0..1 towards the fall: the body loosens further
-		std::uint64_t armBones{ 0 };          // ragdoll bone indices of the arms (bit per bone)
-		std::uint64_t footBones{ 0 };         // ragdoll bone indices of the feet (bit per bone)
+		BoneMask      armBones{};            // ragdoll bone indices of the arms (bit per bone)
+		BoneMask      footBones{};          // ragdoll bone indices of the feet (bit per bone)
 	};
 	inline std::mutex                                     g_driveMutex;
 	inline std::unordered_map<std::uintptr_t, DriveState> g_drives;  // key: hkbRagdollDriver*
@@ -536,10 +541,10 @@ namespace DynamicRagdollSystem
 		std::uint32_t  boneCount{};
 		std::uint32_t  bodyCount{};
 		std::uint32_t  constraintCount{};
-		std::array<std::uint32_t, 64> bodyIDs{};
-		std::array<std::uint32_t, 64> constraintIDs{};
-		std::array<std::int32_t, 64>  boneToBody{};
-		std::array<std::int16_t, 64>  parents{};
+		std::array<std::uint32_t, kMaxRagdollBones> bodyIDs{};
+		std::array<std::uint32_t, kMaxRagdollBones> constraintIDs{};
+		std::array<std::int32_t, kMaxRagdollBones>  boneToBody{};
+		std::array<std::int16_t, kMaxRagdollBones>  parents{};
 	};
 
 	inline Vec3 Add(Vec3 a, Vec3 b) { return { a.x + b.x, a.y + b.y, a.z + b.z }; }

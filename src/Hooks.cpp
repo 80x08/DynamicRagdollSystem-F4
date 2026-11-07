@@ -33,9 +33,9 @@ namespace DynamicRagdollSystem
 						it->burnStart = 0.0f;
 						it->burnProgress = 0.0f;
 					}
-					std::uint64_t arms = 0;
+					BoneMask arms;
 					for (const auto& body : it->bodies)
-						if (body.arm && body.bone >= 0 && body.bone < 64) arms |= std::uint64_t{ 1 } << body.bone;
+						if (body.arm && body.bone >= 0 && body.bone < kMaxRagdollBones) arms.set(body.bone);
 					std::scoped_lock driveLock{ g_driveMutex };
 					for (auto& [driver, state] : g_drives) {
 						if (state.formID != it->formID) continue;

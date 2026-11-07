@@ -246,7 +246,10 @@ namespace DynamicRagdollSystem
 		}
 		auto* rigid = reinterpret_cast<Header*>(output + 0x10 + 13 * 0x10);
 		auto* powered = reinterpret_cast<Header*>(output + 0x10 + 15 * 0x10);
-		if (rigid->elementSize != sizeof(RigidBodyControl) || rigid->capacity <= 0 || rigid->capacity > 64 || rigid->dataOffset <= 0) {
+		if (rigid->elementSize != sizeof(RigidBodyControl) || rigid->capacity <= 0 || rigid->capacity > kMaxRagdollBones || rigid->dataOffset <= 0) {
+			// Undrivable (more than kMaxRagdollBones bones): end the reaction now and skip later hits; left dynamic it sank.
+			// Caller holds g_driveMutex.
+			g_mismatched.insert(a_state.formID);
 			if (!a_state.logged) {
 				a_state.logged = true;
 				REX::INFO("DynamicRagdollSystem: {:08X} unexpected rigid-body track (cap {} elem {:#x}); not driving"sv,
@@ -278,12 +281,12 @@ namespace DynamicRagdollSystem
 		std::memcpy(data, &control, sizeof(control));
 		std::memset(map, 0, static_cast<std::size_t>(rigid->capacity));  // every bone uses palette entry 0 ...
 		std::int16_t entries = 1;
-		const auto addEntry = [&](float a_entryStiffness, std::uint64_t a_bones) {
-			if (!a_bones || entries >= rigid->capacity) return;
+		const auto addEntry = [&](float a_entryStiffness, const BoneMask& a_bones) {
+			if (a_bones.none() || entries >= rigid->capacity) return;
 			const auto entry = makeControl(a_entryStiffness);
 			std::memcpy(data + static_cast<std::size_t>(entries) * rigid->elementSize, &entry, sizeof(entry));
-			for (std::int32_t bone = 0; bone < rigid->capacity && bone < 64; ++bone)
-				if (a_bones >> bone & 1) map[bone] = static_cast<std::uint8_t>(entries);
+			for (std::int32_t bone = 0; bone < rigid->capacity && bone < kMaxRagdollBones; ++bone)
+				if (a_bones[bone]) map[bone] = static_cast<std::uint8_t>(entries);
 			++entries;
 		};
 		// ... except the arms while burning: their own, much softer entry so they can flail.
@@ -712,9 +715,9 @@ namespace DynamicRagdollSystem
 		com = Scale(com, 1.0f / mass);
 		// Floor level by height above the lowest body, not bone names: creature feet are Ankle/Toe/LFOOT.
 		// shortcut: fixed heights tuned for human-sized skeletons; scale by the actor's height if giants misbehave.
-		std::uint64_t feet = 0;
+		BoneMask feet;
 		for (const auto& s : samples)
-			if (s.pos.z - lowest < kFootBodyHeight && s.ref->bone >= 0 && s.ref->bone < 64) feet |= std::uint64_t{ 1 } << s.ref->bone;
+			if (s.pos.z - lowest < kFootBodyHeight && s.ref->bone >= 0 && s.ref->bone < kMaxRagdollBones) feet.set(s.ref->bone);
 		{
 			std::scoped_lock driveLock{ g_driveMutex };
 			for (auto& [driver, state] : g_drives)

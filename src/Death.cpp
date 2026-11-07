@@ -1310,7 +1310,19 @@ namespace DynamicRagdollSystem
 		const bool humanoid = npc && IsHumanoid(a_actor);
 		if (npc && !humanoid) LogSkipOnce(a_actor, "death skipped", "not humanoid");
 		const bool tracked = humanoid && (kDeathStumbleChance > 0.0f || kDeathGripChance > 0.0f || kTwitchChance > 0.0f || kCrawlChance > 0.0f);
-		if (npc && kDisableDeathAnimation) a_ragdollInstant = true;
+		// Creatures whose ragdoll fails the joint check keep their death animation: forced into the ragdoll, Nuka-World
+		// ants (134% gap) spun forever. For creatures the check only reads the joints. World lock busy: keep the animation.
+		const auto creatureJointsFit = [&] {
+			auto* world = GetWorld(a_actor);
+			auto* npWorld = world ? world->m_worldNP.get() : nullptr;
+			if (!npWorld) return false;
+			WorldWriteLock lock{ npWorld };
+			return lock.held && FitJointsToSkeleton(a_actor, npWorld);
+		};
+		if (npc && kDisableDeathAnimation) {
+			if (humanoid || creatureJointsFit()) a_ragdollInstant = true;
+			else LogSkipOnce(a_actor, "death ragdoll", "joint check failed; keeps death animation");
+		}
 		if (tracked && IsBurning(a_actor)) {
 			std::scoped_lock lock{ g_mutex };
 			g_burningDeaths.push_back(a_actor->GetFormID());
