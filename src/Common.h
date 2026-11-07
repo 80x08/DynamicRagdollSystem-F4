@@ -292,6 +292,7 @@ namespace DynamicRagdollSystem
 	inline float kAttackCatchUpSpeed = 9.0f;  // catch-up speed while in a melee attack (fast swings outrun the normal one)
 	// [Burning]: living humanoid NPCs on fire flail and stagger.
 	inline bool  kBurnReaction = true;
+	inline bool  kBurnPowerArmor = false;  // NPCs in power armor count as burning (reaction, burned death)
 	inline float kBurnStiffness = 0.3f;      // body stiffness while burning (fraction of normal)
 	inline float kBurnArmStiffness = 0.5f;   // arm stiffness while burning, so they can flail
 	inline float kBurnFlail = 1.4f;          // arm flail strength while burning
@@ -320,6 +321,7 @@ namespace DynamicRagdollSystem
 		float max;
 	};
 	inline float kDeathStumbleChance = 1.0f;     // chance a death uses the balance/stepping controller
+	inline float kHeadshotSkipStumbleChance = 0.0f;  // chance a head shot kill drops the stumble it rolled
 	inline float kDeathGripChance = 0.75f;        // chance a hand clutches the body part the killing shot hit
 	inline float kTwitchChance = 0.8f;           // chance the body twitches and rolls after it falls
 
@@ -334,6 +336,8 @@ namespace DynamicRagdollSystem
 	inline Range kCrawlTime{ 10.0f, 20.0f };        // seconds a crawl lasts from its start (after fCrawlDelay), fading out
 	inline Range kTwitchStrength{ 1.0f, 2.5f };   // scales the dying twitches
 	inline Range kRollStrength{ 0.5f, 1.5f };     // scales the dying rolls
+	inline Range kPowerArmorTwitchStrength{ 1.0f, 2.5f };  // the same for corpses in power armor
+	inline Range kPowerArmorRollStrength{ 0.5f, 1.5f };
 	inline float kDeathKneeBend = 80.0f;         // degrees the knees fold by the end of the stumble
 	inline Range kFlailStrength{ 2.0f, 3.0f };     // limb flailing while a fast/airborne body flies, 0 = limp
 	inline float kDeathBrace = 2.5f;              // free hands reach for the ground when the body tips over (0 = off)
@@ -376,6 +380,7 @@ namespace DynamicRagdollSystem
 	inline float kExplosionStumbleChance = 0.0f;  // chance an explosion death still balances; otherwise it is flung
 	inline Range kExplosionPush{ 6.0f, 10.0f };    // physics units/s: blast velocity given to every body part
 	inline bool  kRagdollCollision = true;        // ragdolls collide with living NPCs and knock them over (else vanilla)
+	inline bool  kKnockDownPowerArmor = true;     // ... including NPCs in power armor (false: they are only bumped)
 	inline bool  kSelfCollision = true;           // forearms/hands of dead and knocked-down ragdolls collide with their torso
 	inline float kImpactSpeed = 1.0f;            // trunk speed at which a ragdoll knocks over a standing NPC (0 = off)
 	inline float kImpactForce = 3.0f;             // knock force given to that NPC (engine explosion knockdown magnitude)

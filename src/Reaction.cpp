@@ -858,7 +858,7 @@ namespace DynamicRagdollSystem
 		static constexpr std::array<RE::TESFormID, 12> kFireShaders{ 0x0014237E, 0x001B3F73, 0x0014237D, 0x00145365, 0x00149E5E,
 			0x002407FB, 0x00231F8A, 0x00240C20, 0x00211112, 0x00216352, 0x0001D22B, 0x000303B0 };
 		constexpr RE::TESFormID kDamageTypeFire = 0x0004A0C8;
-		if (RE::PowerArmor::ActorInPowerArmor(*a_actor)) return false;  // power armor: no burning reactions at all
+		if (!kBurnPowerArmor && RE::PowerArmor::ActorInPowerArmor(*a_actor)) return false;  // bBurnPowerArmor off: never burning
 		auto* process = a_actor->currentProcess;
 		if (!process || !process->middleHigh) return false;
 		for (const auto& entry : process->middleHigh->activeEffects.data) {
@@ -1210,7 +1210,8 @@ namespace DynamicRagdollSystem
 				!actor->currentProcess || GetWorld(actor.get()) != a_world) continue;
 			const auto id = actor->GetFormID();
 			if (knocked.contains(id) || std::find(reacting.begin(), reacting.end(), id) != reacting.end() ||
-				!IsHumanoid(actor.get()) || InLockedAnimation(actor.get())) continue;
+				!IsHumanoid(actor.get()) || InLockedAnimation(actor.get()) ||
+				(!kKnockDownPowerArmor && RE::PowerArmor::ActorInPowerArmor(*actor))) continue;
 			const auto pos = actor->GetPosition();
 			for (const auto& f : fast) {
 				const float dx = pos.x - f.pos.x, dy = pos.y - f.pos.y, dz = f.pos.z - pos.z;

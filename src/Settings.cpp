@@ -59,6 +59,8 @@ fAttackCatchUpSpeed = 9.0
 # true = living humanoid NPCs (humans, ghouls, super mutants) on fire stop attacking, flail their arms and stagger
 # around until the fire goes out. Detects base-game fire (flamer, Shishkebab, incendiary, Molotov, fire hazards).
 bBurnReaction = true
+# true = NPCs in power armor can burn too (burning reaction, burned-to-death writhing); false = power armor ignores fire.
+bBurnPowerArmor = false
 # Body stiffness while burning, as a fraction of normal (lower = more wobbly; the NPC keeps its own animation). Range 0-1.
 fBurnStiffness = 0.3
 # Arm stiffness while burning (near 0 = arms free to flail). Range 0-1.
@@ -108,6 +110,8 @@ fBurnDeathTimeMax = 10.0
 bDisableDeathAnimation = true
 # Chance the dead body tries to stay up for a moment (balance, stepping) before it collapses.
 fDeathStumbleChance = 1.0
+# Chance a head shot kill skips the stumble and collapses at once (checked after fDeathStumbleChance). Range 0-1.
+fHeadshotSkipStumbleChance = 0.0
 # Chance one hand clutches the body part the killing shot hit, while stumbling and after falling.
 fDeathGripChance = 0.7
 # Chance the body twitches and rolls on the ground after it falls.
@@ -162,6 +166,11 @@ fTwitchStrengthMax = 2.5
 # Strength of the dying rolls (the body turning onto its side/back). Range 0-3.
 fRollStrengthMin = 0.5
 fRollStrengthMax = 1.5
+# Twitch and roll strengths for corpses in power armor (instead of the two above). Range 0-3.
+fPowerArmorTwitchStrengthMin = 1.0
+fPowerArmorTwitchStrengthMax = 1.5
+fPowerArmorRollStrengthMin = 0.5
+fPowerArmorRollStrengthMax = 1.0
 # How hard a dying roll turns the trunk (rad/s^2 at roll strength 1). Also the crawl turn-over. Range 0-1000.
 fRollAccel = 160.0
 # true = dying rolls also swing the arms with the trunk (can fling a hand and drag the body over); false = the arms follow the shoulders.
@@ -189,6 +198,9 @@ fExplosionLift = 0.5
 # when they hit them fast enough (fRagdollImpactSpeed). Also lets walking NPCs bump into corpses on the floor.
 # false = vanilla (no contact, no knock-over).
 bRagdollCollideWithNPCs = true
+# false = NPCs in power armor are never knocked over by ragdolls (bodies still bump into them); a power armor body
+# still knocks over others.
+bRagdollKnockDownPowerArmor = true
 # Dead or knocked-down bodies flying at least this fast (physics units/s; running is about 4-5) knock over
 # standing NPCs they run into. 0 = no knock-over (the collision stays). Range 0-50.
 fRagdollImpactSpeed = 1.0
@@ -345,6 +357,7 @@ fCrawlTurnTime = 3.0
 		{
 			const auto readBurn = [&](const char* a_key, float& a_value, float a_min, float a_max) { ReadFloat(root, "Burning", a_key, a_value, a_min, a_max); };
 			ReadBool(root, "Burning", "bBurnReaction", kBurnReaction);
+			ReadBool(root, "Burning", "bBurnPowerArmor", kBurnPowerArmor);
 		ReadBool(root, "Burning", "bBurnRollArms", kBurnRollArms);
 			readBurn("fBurnStiffness", kBurnStiffness, 0.0f, 1.0f);
 			readBurn("fBurnArmStiffness", kBurnArmStiffness, 0.0f, 1.0f);
@@ -392,6 +405,7 @@ fCrawlTurnTime = 3.0
 			readRangeWith(readDeath, a_key, a_range, a_min, a_max);
 		};
 		readDeath("fDeathStumbleChance", kDeathStumbleChance, 0.0f, 1.0f);
+		readDeath("fHeadshotSkipStumbleChance", kHeadshotSkipStumbleChance, 0.0f, 1.0f);
 		readDeath("fDeathGripChance", kDeathGripChance, 0.0f, 1.0f);
 		readDeath("fTwitchChance", kTwitchChance, 0.0f, 1.0f);
 		readRange("fDeathStumbleTime", kDeathStumbleTime, 0.2f, 15.0f);
@@ -400,6 +414,8 @@ fCrawlTurnTime = 3.0
 		readRange("fDyingTime", kDyingTime, 0.0f, 30.0f);
 		readRange("fTwitchStrength", kTwitchStrength, 0.0f, 3.0f);
 		readRange("fRollStrength", kRollStrength, 0.0f, 3.0f);
+		readRange("fPowerArmorTwitchStrength", kPowerArmorTwitchStrength, 0.0f, 3.0f);
+		readRange("fPowerArmorRollStrength", kPowerArmorRollStrength, 0.0f, 3.0f);
 		readDeath("fRollAccel", kRollAccel, 0.0f, 1000.0f);
 		ReadBool(root, "Death", "bDeathRollArms", kDeathRollArms);
 		readRange("fDeathBraking", kDeathBraking, 0.0f, 20.0f);
@@ -437,6 +453,7 @@ fCrawlTurnTime = 3.0
 		readRange("fExplosionPush", kExplosionPush, 0.0f, 50.0f);
 		readDeath("fExplosionLift", kExplosionLift, 0.0f, 2.0f);
 		ReadBool(root, "Death", "bRagdollCollideWithNPCs", kRagdollCollision);
+		ReadBool(root, "Death", "bRagdollKnockDownPowerArmor", kKnockDownPowerArmor);
 		ReadBool(root, "Death", "bRagdollSelfCollision", kSelfCollision);
 		readDeath("fRagdollImpactSpeed", kImpactSpeed, 0.0f, 50.0f);
 		readDeath("fRagdollImpactForce", kImpactForce, 0.0f, 1000.0f);
@@ -453,16 +470,17 @@ fCrawlTurnTime = 3.0
 			kBurnReaction, kBurnStiffness, kBurnArmStiffness, kBurnFlail, kBurnShove, kBurnShoveMin, kBurnShoveMax, kBurnFallMin, kBurnFallMax,
 			kBurnFallForce, kBurnDownRoll, kBurnRollGapMin, kBurnRollGapMax, kBurnOutGrace, kBurnDownMax, kBurnDeathTwitchMin,
 			kBurnDeathTwitchMax, kBurnDeathRollMin, kBurnDeathRollMax, kBurnDeathTimeMin, kBurnDeathTimeMax);
-		REX::INFO("DynamicRagdollSystem: death settings: noDeathAnimation {} chances stumble {} grip {} twitch {}; stiffness {} pushScale {} catchSpeed {} catchRange {} kneeBend {}; dying ends at {} damage, on head loss {}, headless roll x{}; crawl chance {} speed {} interval {} delay {} time {}-{}; twitch delay {} burn roll delay {}"sv,
-			kDisableDeathAnimation, kDeathStumbleChance, kDeathGripChance, kTwitchChance, kDeathStiffness, kDeathPushScale, kCatchSpeed, kCatchRange, kDeathKneeBend,
+		REX::INFO("DynamicRagdollSystem: death settings: noDeathAnimation {} chances stumble {} (head shot skip {}) grip {} twitch {}; stiffness {} pushScale {} catchSpeed {} catchRange {} kneeBend {}; dying ends at {} damage, on head loss {}, headless roll x{}; crawl chance {} speed {} interval {} delay {} time {}-{}; twitch delay {} burn roll delay {}"sv,
+			kDisableDeathAnimation, kDeathStumbleChance, kHeadshotSkipStumbleChance, kDeathGripChance, kTwitchChance, kDeathStiffness, kDeathPushScale, kCatchSpeed, kCatchRange, kDeathKneeBend,
 			kDyingEndDamage, kDyingEndOnHeadLoss, kHeadlessRollScale, kCrawlChance, kCrawlSpeed, kCrawlInterval, kCrawlDelay, kCrawlTime.min, kCrawlTime.max, kTwitchDelay, kBurnRollDelay);
 		REX::INFO("DynamicRagdollSystem: crawl tuning: pushAccel {} reach {} side {} lift {} elbow {} arm {} maxHeight {} stall {} minPlant {} ankle {} hip {} knee {} headTurn {} headLift {} limbAccel {} limbTorque {} turnTime {}"sv,
 			kCrawlAccel, kCrawlReach, kCrawlSide, kCrawlLift, kCrawlElbow, kCrawlArmStrength, kCrawlArmMaxHeight, kCrawlStall, kCrawlMinPlant,
 			kCrawlAnkleAccel, kCrawlHipSpeed, kCrawlKneeSpeed, kCrawlHeadTurn, kCrawlHeadLift, kCrawlLimbAccel, kCrawlLimbMaxTorque, kCrawlTurnTime);
-		REX::INFO("DynamicRagdollSystem: death ranges: time {}-{} support {}-{} upright {}-{} dying {}-{} twitch {}-{} roll {}-{} (accel {}) braking {}-{}"sv,
+		REX::INFO("DynamicRagdollSystem: death ranges: time {}-{} support {}-{} upright {}-{} dying {}-{} twitch {}-{} roll {}-{} (accel {}) power armor twitch {}-{} roll {}-{} braking {}-{}; power armor burns {} knocked down {}"sv,
 			kDeathStumbleTime.min, kDeathStumbleTime.max, kDeathSupport.min, kDeathSupport.max, kDeathUpright.min, kDeathUpright.max,
 			kDyingTime.min, kDyingTime.max, kTwitchStrength.min, kTwitchStrength.max, kRollStrength.min, kRollStrength.max, kRollAccel,
-			kDeathBraking.min, kDeathBraking.max);
+			kPowerArmorTwitchStrength.min, kPowerArmorTwitchStrength.max, kPowerArmorRollStrength.min, kPowerArmorRollStrength.max,
+			kDeathBraking.min, kDeathBraking.max, kBurnPowerArmor, kKnockDownPowerArmor);
 	}
 
 

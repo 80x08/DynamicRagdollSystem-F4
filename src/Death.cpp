@@ -1384,8 +1384,9 @@ namespace DynamicRagdollSystem
 			death.upright = pick(kDeathUpright);
 			death.braking = pick(kDeathBraking);
 			death.dyingTime = (death.grip || moves || burned || death.crawlRolled) ? pick(kDyingTime) : 0.0f;
-			death.twitch = moves ? pick(kTwitchStrength) : 0.0f;
-			death.roll = moves ? pick(kRollStrength) : 0.0f;
+			const bool powerArmor = RE::PowerArmor::ActorInPowerArmor(*actor);
+			death.twitch = moves ? pick(powerArmor ? kPowerArmorTwitchStrength : kTwitchStrength) : 0.0f;
+			death.roll = moves ? pick(powerArmor ? kPowerArmorRollStrength : kRollStrength) : 0.0f;
 			if (burned) {
 				death.burnedToDeath = true;
 				death.twitch = kBurnDeathTwitchMin + (kBurnDeathTwitchMax - kBurnDeathTwitchMin) * unit(rng);
@@ -1413,6 +1414,11 @@ namespace DynamicRagdollSystem
 				// dismember flag on the hit, so it rules out the crawl by itself.
 				const auto limb = it->second.limb;
 				death.headShotKill = limb == 1 || limb == 2 || limb == 5 || limb == 0x10;
+				if (death.headShotKill && death.stumble && unit(rng) < kHeadshotSkipStumbleChance) {
+					death.stumble = false;
+					death.end = a_now + 5.0f;  // as a death rolled without a stumble
+					REX::INFO("DynamicRagdollSystem: {:08X} head shot: stumble skipped"sv, formID);
+				}
 				// Explosion deaths are flung: no balance help (support/upright/braking), the blast push, and the limbs
 				// flail while airborne. The stumble machinery still runs for the joints, grip and flailing.
 				if (it->second.explosion && unit(rng) >= kExplosionStumbleChance) {
