@@ -179,6 +179,7 @@ namespace DynamicRagdollSystem
 		std::scoped_lock lock{ g_driveMutex };
 		g_drives.clear();
 		g_mismatched.clear();  // form IDs of created refs (FF...) are reused across saves
+		g_wideJointGap.clear();
 	}
 
 

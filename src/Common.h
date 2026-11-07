@@ -336,8 +336,8 @@ namespace DynamicRagdollSystem
 	inline Range kCrawlTime{ 10.0f, 20.0f };        // seconds a crawl lasts from its start (after fCrawlDelay), fading out
 	inline Range kTwitchStrength{ 1.0f, 2.5f };   // scales the dying twitches
 	inline Range kRollStrength{ 0.5f, 1.5f };     // scales the dying rolls
-	inline Range kPowerArmorTwitchStrength{ 1.0f, 2.5f };  // the same for corpses in power armor
-	inline Range kPowerArmorRollStrength{ 0.5f, 1.5f };
+	inline Range kPowerArmorTwitchStrength{ 1.0f, 1.5f };  // the same for corpses in power armor
+	inline Range kPowerArmorRollStrength{ 0.5f, 1.0f };
 	inline float kDeathKneeBend = 80.0f;         // degrees the knees fold by the end of the stumble
 	inline Range kFlailStrength{ 2.0f, 3.0f };     // limb flailing while a fast/airborne body flies, 0 = limp
 	inline float kDeathBrace = 2.5f;              // free hands reach for the ground when the body tips over (0 = off)
@@ -501,6 +501,7 @@ namespace DynamicRagdollSystem
 		bool          attackLogged{ false };  // logged a reaction during a melee attack
 		bool          burning{ false };       // on fire: fixed loose stiffness, arms on their own soft entry
 		float         burnProgress{ 0.0f };   // 0..1 towards the fall: the body loosens further
+		float         poseScale{ 1.0f };      // skeleton root world scale (race height): drive targets are scaled by it
 		BoneMask      armBones{};            // ragdoll bone indices of the arms (bit per bone)
 		BoneMask      footBones{};          // ragdoll bone indices of the feet (bit per bone)
 	};
@@ -513,6 +514,13 @@ namespace DynamicRagdollSystem
 	{
 		std::scoped_lock lock{ g_driveMutex };
 		return g_mismatched.contains(a_id);
+	}
+	// Actors whose ragdoll joints were ever over 50% off their skeleton (guarded by g_driveMutex): keep the death animation.
+	inline std::unordered_set<RE::TESFormID>              g_wideJointGap;
+	inline bool HadWideJointGap(RE::TESFormID a_id)
+	{
+		std::scoped_lock lock{ g_driveMutex };
+		return g_wideJointGap.contains(a_id);
 	}
 	using DriveToPose = void (*)(void*, float, void*, void*);
 	inline DriveToPose g_driveToPose{};
@@ -718,7 +726,7 @@ namespace DynamicRagdollSystem
 	Vec3 BodyPosition(const RE::hknpBody& a_body);
 	bool ReadHkArray(std::uintptr_t a_object, std::size_t a_offset, std::uint32_t a_max, HkArrayView& a_out);
 	bool FindRagdollMap(RE::Actor* a_actor, RE::hknpBSWorld* a_world, RagdollMap& a_out);
-	bool FitJointsToSkeleton(RE::Actor* a_actor, RE::hknpBSWorld* a_world);
+	bool FitJointsToSkeleton(RE::Actor* a_actor, RE::hknpBSWorld* a_world, bool a_checkOnly = false);
 	std::int32_t FindWorldBody(RE::hknpBSWorld* a_world, std::uint32_t a_id);
 	std::int32_t FindJointConstraint(RE::hknpBSWorld* a_world, const RagdollMap& a_map,
 		std::uint32_t a_body, std::uint32_t a_parent);

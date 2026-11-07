@@ -315,11 +315,13 @@ namespace DynamicRagdollSystem
 
 	void Hook_DriveToPose(void* a_driver, float a_dt, void* a_context, void* a_output)
 	{
+		float poseScale = 1.0f;
 		{
 			std::scoped_lock lock{ g_driveMutex };
 			if (const auto it = g_drives.find(reinterpret_cast<std::uintptr_t>(a_driver)); it != g_drives.end()) {
 				auto& state = it->second;
 				++state.calls;
+				poseScale = state.poseScale;
 				const float now = NowSeconds();
 				const float recover = std::clamp((now - state.start) / kRecoverTime, 0.0f, 1.0f);
 				const float smooth = recover * recover * (3.0f - 2.0f * recover);
@@ -341,7 +343,28 @@ namespace DynamicRagdollSystem
 						state.burning ? kBurnArmStiffness : -1.0f, state)) ++state.injected;
 			}
 		}
+		// driveToPose builds its targets from the local pose (track 2, hkQsTransform 0x30 bytes per bone) without the
+		// skeleton root's scale (race height): a 1.72x giant was pulled down to human size, a 0.72x NPC up to it. Scale
+		// every bone offset for the call (uniform scale: the whole model-space pose scales about the root), then restore.
+		thread_local std::vector<float> saved;
+		float*       pose = nullptr;
+		std::int32_t count = 0;
+		std::uintptr_t output = 0;
+		std::int32_t   trackCount = 0;
+		if (std::abs(poseScale - 1.0f) > 0.01f && ReadField(reinterpret_cast<std::uintptr_t>(a_output), 0, output) && output &&
+			ReadField(output, 4, trackCount) && trackCount > 2 && !(*reinterpret_cast<std::uint8_t*>(output + 0x3C) & 0x10)) {
+			count = std::clamp<std::int32_t>(*reinterpret_cast<std::int16_t*>(output + 0x32), 0, 256);
+			pose = reinterpret_cast<float*>(output + *reinterpret_cast<std::int16_t*>(output + 0x34));
+			saved.resize(static_cast<std::size_t>(count) * 3);
+			for (std::int32_t i = 0; i < count; ++i)
+				for (std::int32_t k = 0; k < 3; ++k) {
+					saved[i * 3 + k] = pose[i * 12 + k];
+					pose[i * 12 + k] *= poseScale;
+				}
+		}
 		g_driveToPose(a_driver, a_dt, a_context, a_output);
+		for (std::int32_t i = 0; pose && i < count; ++i)
+			for (std::int32_t k = 0; k < 3; ++k) pose[i * 12 + k] = saved[i * 3 + k];
 	}
 
 
@@ -622,6 +645,9 @@ namespace DynamicRagdollSystem
 				std::scoped_lock lock{ g_driveMutex };
 				g_drives[driver] = { entry.formID, now, now + kReactionTime, false,
 					reinterpret_cast<std::uintptr_t>(actor->currentProcess->middleHigh->animationGraphManager.get()) };
+				g_drives[driver].poseScale = root->world.scale;
+				if (std::abs(root->world.scale - 1.0f) > 0.01f)
+					REX::INFO("DynamicRagdollSystem: {:08X} skeleton scale {:.3f}: drive targets scaled"sv, entry.formID, root->world.scale);
 			}
 			{
 				std::scoped_lock lock{ g_mutex };

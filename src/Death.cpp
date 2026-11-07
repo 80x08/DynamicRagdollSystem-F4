@@ -1317,7 +1317,7 @@ namespace DynamicRagdollSystem
 			auto* npWorld = world ? world->m_worldNP.get() : nullptr;
 			if (!npWorld) return false;
 			WorldWriteLock lock{ npWorld };
-			return lock.held && FitJointsToSkeleton(a_actor, npWorld);
+			return lock.held && FitJointsToSkeleton(a_actor, npWorld, true);
 		};
 		if (npc && kDisableDeathAnimation) {
 			if (humanoid || creatureJointsFit()) a_ragdollInstant = true;

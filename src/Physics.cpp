@@ -81,14 +81,15 @@ namespace DynamicRagdollSystem
 	// dynamic ragdoll pulls apart: stretched body, feet driven through the ground. While the bodies still follow the
 	// animation, every joint whose two pivots no longer meet gets its own copy of the joint data with one pivot moved
 	// onto the other. Needs the world write lock, before the bodies turn dynamic. Returns false if a joint that does
-	// not meet could not be fitted.
-	bool FitJointsToSkeleton(RE::Actor* a_actor, RE::hknpBSWorld* a_world)
+	// not meet could not be fitted. a_checkOnly: change nothing, return false if a joint gap ever exceeded 50%.
+	bool FitJointsToSkeleton(RE::Actor* a_actor, RE::hknpBSWorld* a_world, bool a_checkOnly)
 	{
 		RagdollMap map{};
-		if (!FindRagdollMap(a_actor, a_world, map)) return true;
+		const bool unreadable = !a_checkOnly || !HadWideJointGap(a_actor->GetFormID());  // map unreadable: fit = nothing to do, check = last known result
+		if (!FindRagdollMap(a_actor, a_world, map)) return unreadable;
 		auto* table = reinterpret_cast<std::uint8_t*>(a_world->m_constraintManager.constraintBuffer);
 		const auto capacity = a_world->m_constraintManager.capacity;
-		if (!table || capacity == 0 || capacity > 0x100000) return true;
+		if (!table || capacity == 0 || capacity > 0x100000) return unreadable;
 		// hkpRagdollConstraintData 0x1A0 / hkpLimitedHingeConstraintData 0x130 bytes: transforms atom at +0x20,
 		// pivot A at +0x60, pivot B at +0xA0, both in their body's local space (isValid at 0x1419303E0 / 0x14192AD80).
 		static const auto ragdollType = RE::VTABLE::hkpRagdollConstraintData[0].address();
@@ -101,8 +102,7 @@ namespace DynamicRagdollSystem
 			return Rotate(Transpose(RotationFrom(a_body.m_transform.m_rotation)), Sub(a_world, BodyPosition(a_body)));
 		};
 		std::int32_t fitted = 0, failed = 0;
-		float worst = 0.0f, skipped = 0.0f;
-		const bool humanoid = IsHumanoid(a_actor);
+		float worst = 0.0f, widest = 0.0f;
 		for (std::uint32_t i = 0; i < map.constraintCount; ++i) {
 			const auto id = map.constraintIDs[i];
 			if (id >= capacity) continue;
@@ -129,15 +129,8 @@ namespace DynamicRagdollSystem
 			}
 			// Adults (and an already fitted copy) meet within keyframe lag; child-sized skeletons were ~12 %.
 			if (span < 1.0e-3f || gap < 0.08f * span) continue;
-			// Fitting is for resized human skeletons: creature joints are never rewritten (the ant's fitted joints
-			// stayed on the corpse and it spun forever). Small creature gaps (fog crawler) are left as they are;
-			// a large one (ant: 131%) means the ragdoll does not match: no reactions.
-			// shortcut: 50% limit is a guess between those two; adjust from the "creature joints" log line.
-			if (!humanoid) {
-				skipped = std::max(skipped, gap / span);
-				if (gap > 0.5f * span) ++failed;
-				continue;
-			}
+			widest = std::max(widest, gap / span);
+			if (a_checkOnly) continue;
 			const auto worldA = toWorld(bodies[i0], a);
 			const auto worldB = toWorld(bodies[i1], b);
 			const auto type = *reinterpret_cast<const std::uintptr_t*>(data);
@@ -171,9 +164,19 @@ namespace DynamicRagdollSystem
 		if (fitted || failed)
 			REX::INFO("DynamicRagdollSystem: {:08X} ragdoll joints fitted to its skeleton: {} (worst gap {:.0f}% of the pivot), {} not fitted"sv,
 				a_actor->GetFormID(), fitted, worst * 100.0f, failed);
-		if (skipped > 0.0f)
-			REX::INFO("DynamicRagdollSystem: {:08X} creature joints left unfitted, worst gap {:.0f}% of the pivot{}"sv,
-				a_actor->GetFormID(), skipped * 100.0f, failed ? " (over 50%: no reactions)" : "");
+		// A gap this wide is not a resized skeleton but a ragdoll that does not match (Nuka-World ants: 131%). Remembered,
+		// because once a reaction has fitted the joints they meet and a later check would pass.
+		// shortcut: 50% is a guess between fog crawler (13%) and ant; adjust from the "joint check" log line.
+		const bool wide = widest > 0.5f;
+		if (wide) {
+			std::scoped_lock lock{ g_driveMutex };
+			g_wideJointGap.insert(a_actor->GetFormID());
+		}
+		if (a_checkOnly) {
+			if (widest > 0.0f)
+				REX::INFO("DynamicRagdollSystem: {:08X} joint check: worst gap {:.0f}% of the pivot"sv, a_actor->GetFormID(), widest * 100.0f);
+			return !wide && !HadWideJointGap(a_actor->GetFormID());
+		}
 		return failed == 0;
 	}
 
