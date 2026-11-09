@@ -379,7 +379,7 @@ namespace DynamicRagdollSystem
 	constexpr float kCrawlSettle = 0.5f;          // s after a turn-over roll before the ray is trusted again
 	inline float kDeathKnockbackScale = 0.4f;     // fraction of a gun's death knockback kept (1 = vanilla), not explosions
 	inline float kExplosionStumbleChance = 0.0f;  // chance an explosion death still balances; otherwise it is flung
-	inline Range kExplosionPush{ 6.0f, 10.0f };    // physics units/s: blast velocity given to every body part
+	inline Range kExplosionPush{ 3.0f, 10.0f };    // physics units/s: blast velocity given to every body part
 	inline bool  kRagdollCollision = true;        // ragdolls collide with living NPCs and knock them over (else vanilla)
 	inline bool  kKnockDownPowerArmor = true;     // ... including NPCs in power armor (false: they are only bumped)
 	inline bool  kSelfCollision = true;           // forearms/hands of dead and knocked-down ragdolls collide with their torso
@@ -388,6 +388,19 @@ namespace DynamicRagdollSystem
 	inline float kExplosionLift = 0.5f;          // upward part of the blast push, as a fraction of it
 	inline Range kDeathBraking{ 2.4f, 2.7f };     // horizontal braking of the dying body while its feet are planted, 1/s
 	inline bool  kIniHotReload = false;           // [General] bEnableHotReload, read at game start only
+	// [Knockdown] living NPCs knocked over by a burst of bullet hits (shotgun pellets) or one heavy hit.
+	inline int   kMultiHitCount = 5;                // hits needed within kMultiHitWindow (0 = off)
+	inline float kMultiHitWindow = 0.05f;           // s from the first hit of a burst
+	inline float kMultiHitMinDamage = 5.0f;         // total damage of the counted hits must also reach this
+	inline float kMultiHitChance = 0.3f;            // rolled once per burst that reaches kMultiHitCount
+	inline float kMultiHitForce = 7.5f;             // engine explosion knockdown magnitude
+	inline float kHeavyHitDamage = 75.0f;           // one hit with at least this damage (0 = off)
+	inline float kHeavyHitChance = 0.3f;
+	inline float kHeavyHitForce = 6.0f;
+	inline float kHitKnockCooldown = 3.0f;          // s after a knockdown before the next one (either kind)
+	inline bool  kHitKnockPowerArmor = false;
+	inline bool  kHitKnockHumanoidOnly = true;
+	inline bool  kHitKnockPlayerOnly = false;       // only hits from the player count
 
 	// Death stumble controller (v0.1.x). Gains are per second; caps are torque/force, converted with dt.
 	constexpr float kJointKp = 20.0f;
@@ -482,6 +495,23 @@ namespace DynamicRagdollSystem
 	inline std::vector<RE::TESFormID>               g_burningDeaths;  // on fire at KillImpl
 	inline std::unordered_map<RE::TESFormID, Vec3>  g_deathMoveVel;  // actor velocity just before KillImpl, physics units/s
 	inline std::unordered_map<RE::TESFormID, LastHit> g_lastHit;  // most recent hit per NPC, for the killing push
+	struct HitBurst
+	{
+		float start{ 0.0f };
+		int   hits{ 0 };
+		float damage{ 0.0f };
+		Vec3  dir{};        // sum of the hit directions
+		bool  rolled{ false };     // chance already rolled for this burst
+	};
+	inline std::unordered_map<RE::TESFormID, HitBurst> g_hitBursts;   // [Knockdown] hits counted per NPC (g_mutex)
+	inline std::unordered_map<RE::TESFormID, float>    g_lastKnock;   // time of the last hit knockdown (multi-hit or heavy)
+	struct PendingKnock
+	{
+		RE::TESFormID formID{};
+		Vec3          dir{};
+		float         force{};
+	};
+	inline std::vector<PendingKnock> g_pendingKnocks;  // hit knockdowns to start next update
 
 	// Read by the driveToPose hook (behavior-graph threads), written by the main thread.
 	// Most ragdoll bones/bodies handled (fog crawler: 65). The engine has no such limit; arrays here are fixed.
@@ -793,6 +823,12 @@ namespace DynamicRagdollSystem
 	void EnforceNoCCLayer(Stumble& a_stumble, RE::Actor* a_actor);
 	void TraceMovement(Stumble& a_stumble, RE::Actor* a_actor, float a_now);
 	bool EndStumble(const Stumble& a_stumble, RE::Actor* a_actor);
+
+	bool IsTurret(RE::Actor* a_actor);
+
+	// Knockdown.cpp
+	void CountKnockdownHit(RE::Actor* a_actor, const RE::HitData& a_hit);
+	void ProcessPendingKnocks();
 
 	// Death.cpp
 	void ApplyGrip(Death& a_stumble, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_strength);

@@ -111,6 +111,14 @@ namespace DynamicRagdollSystem
 		if (logged.insert(line).second) REX::INFO("DynamicRagdollSystem: {}"sv, line);
 	}
 
+	// ActorTypeTurret keyword, on the TurretWorkshop/Bubble/Tripod races.
+	bool IsTurret(RE::Actor* a_actor)
+	{
+		constexpr RE::TESFormID kActorTypeTurret = 0x000B2BF3;
+		const auto* race = a_actor->race;
+		return race && race->HasKeywordID(kActorTypeTurret);
+	}
+
 	// Called for every hit before the engine applies it (DoHitMe). Returns true if a reaction was queued.
 	bool QueueReaction(RE::Actor* a_actor, const RE::HitData& a_hit)
 	{
@@ -118,8 +126,7 @@ namespace DynamicRagdollSystem
 			a_hit.totalDamage < kMinDamage) {
 			return false;
 		}
-		constexpr RE::TESFormID kActorTypeTurret = 0x000B2BF3;  // on TurretWorkshop/Bubble/Tripod races
-		if (const auto* race = a_actor->race; race && race->HasKeywordID(kActorTypeTurret)) {
+		if (IsTurret(a_actor)) {
 			LogSkipOnce(a_actor, "hit skipped", "turret");
 			return false;
 		}
@@ -201,6 +208,7 @@ namespace DynamicRagdollSystem
 						break;
 					}
 		}
+		if (a_hit && a_actor) CountKnockdownHit(a_actor, *a_hit);  // Knockdown.cpp
 		// Head dismembered/exploded by this hit (flags read after the engine applied it).
 		using Limb = RE::BGSBodyPartDefs::LIMB_ENUM;
 		if (a_hit && a_actor && !a_actor->IsPlayerRef() &&

@@ -57,6 +57,40 @@ fAttackSoftness = 0.1
 # Catch-up speed while in a melee attack, so the body keeps up with fast swings. Range 0.5-100.
 fAttackCatchUpSpeed = 9.0
 
+[Knockdown]
+# Living NPCs knocked over by bullet hits: the engine's ragdoll knockdown, then they get up by themselves. Two triggers,
+# each with its own chance and force: a burst of hits at nearly the same moment (shotgun pellets, each its own hit),
+# and one heavy hit. Explosion hits never count (explosions knock NPCs down by themselves). Hits that kill go to the
+# [Death] ragdoll instead.
+
+# Burst: hits needed. Pellets land within a few milliseconds of each other, so automatic weapons do not count as one
+# burst. Not every pellet lands at range (a double-barrel lands 3-8 of its 8). 0 = off. Range 0-100.
+iMultiHitCount = 5
+# Seconds from the first hit of a burst in which the other hits must land. Range 0.001-2.
+fMultiHitWindow = 0.05
+# Total damage of those hits must also reach this. 0 = any. Range 0-10000.
+fMultiHitMinDamage = 5.0
+# Chance a burst that meets the above knocks the NPC down (rolled once per burst). Range 0-1.
+fMultiHitChance = 0.3
+# How hard it is knocked over (engine knockdown force, as fRagdollImpactForce). Range 0-1000.
+fMultiHitForce = 7.5
+
+# Heavy hit: one hit with at least this much damage (e.g. a sniper rifle, a power attack). 0 = off. Range 0-100000.
+# Killing hits are handled by [Death] instead (fDeathFlingDamage).
+fHeavyHitDamage = 75.0
+# Chance and force of the heavy-hit knockdown. Ranges 0-1, 0-1000.
+fHeavyHitChance = 0.3
+fHeavyHitForce = 6.0
+
+# Seconds after a knockdown before the same NPC can be knocked down by hits again. Range 0-600.
+fKnockdownCooldown = 3.0
+# true = NPCs in power armor can be knocked down by hits.
+bKnockdownPowerArmor = false
+# true = only humans, ghouls, feral ghouls and super mutants. WARNING: Will knockdown deathclaws, fog crawlers etc. as well if false
+bKnockdownHumanoidOnly = true
+# true = only hits from the player count (companions and other NPCs shooting do not knock anyone down).
+bKnockdownPlayerOnly = false
+
 [Burning]
 # true = living humanoid NPCs (humans, ghouls, super mutants) on fire stop attacking, flail their arms and stagger
 # around until the fire goes out. Detects base-game fire (flamer, Shishkebab, incendiary, Molotov, fire hazards).
@@ -192,7 +226,7 @@ fFlailStrengthMax = 3.0
 fExplosionStumbleChance = 0.0
 # Blast speed given to the whole body of a flung explosion death (physics units/s; running is about 4-5),
 # picked per death. Range 0-50.
-fExplosionPushMin = 6.0
+fExplosionPushMin = 3.0
 fExplosionPushMax = 10.0
 # Upward part of the blast, as a fraction of the push (0 = flat, 1 = as much up as away). Range 0-2.
 fExplosionLift = 0.5
@@ -357,6 +391,27 @@ fCrawlTurnTime = 3.0
 		read("fMaxCatchUpSpeed", kMaxCatchUpSpeed, 0.5f, 100.0f);
 		read("fAttackSoftness", kAttackSoftness, 0.0f, 1.0f);
 		read("fAttackCatchUpSpeed", kAttackCatchUpSpeed, 0.5f, 100.0f);
+		{
+			const auto readKnock = [&](const char* a_key, float& a_value, float a_min, float a_max) { ReadFloat(root, "Knockdown", a_key, a_value, a_min, a_max); };
+			float hits = static_cast<float>(kMultiHitCount);
+			readKnock("iMultiHitCount", hits, 0.0f, 100.0f);
+			kMultiHitCount = static_cast<int>(std::lround(hits));
+			readKnock("fMultiHitWindow", kMultiHitWindow, 0.001f, 2.0f);
+			readKnock("fMultiHitMinDamage", kMultiHitMinDamage, 0.0f, 10000.0f);
+			readKnock("fMultiHitChance", kMultiHitChance, 0.0f, 1.0f);
+			readKnock("fMultiHitForce", kMultiHitForce, 0.0f, 1000.0f);
+			readKnock("fHeavyHitDamage", kHeavyHitDamage, 0.0f, 100000.0f);
+			readKnock("fHeavyHitChance", kHeavyHitChance, 0.0f, 1.0f);
+			readKnock("fHeavyHitForce", kHeavyHitForce, 0.0f, 1000.0f);
+			readKnock("fKnockdownCooldown", kHitKnockCooldown, 0.0f, 600.0f);
+			ReadBool(root, "Knockdown", "bKnockdownPowerArmor", kHitKnockPowerArmor);
+			ReadBool(root, "Knockdown", "bKnockdownHumanoidOnly", kHitKnockHumanoidOnly);
+			ReadBool(root, "Knockdown", "bKnockdownPlayerOnly", kHitKnockPlayerOnly);
+			REX::INFO("DynamicRagdollSystem: knockdown settings: burst {} hits in {}s, min damage {}, chance {} force {}; heavy hit {} damage, chance {} force {}; cooldown {}s power armor {} humanoid only {} player only {}"sv,
+				kMultiHitCount, kMultiHitWindow, kMultiHitMinDamage, kMultiHitChance, kMultiHitForce,
+				kHeavyHitDamage, kHeavyHitChance, kHeavyHitForce, kHitKnockCooldown, kHitKnockPowerArmor, kHitKnockHumanoidOnly,
+				kHitKnockPlayerOnly);
+		}
 		{
 			const auto readBurn = [&](const char* a_key, float& a_value, float a_min, float a_max) { ReadFloat(root, "Burning", a_key, a_value, a_min, a_max); };
 			ReadBool(root, "Burning", "bBurnReaction", kBurnReaction);

@@ -15,6 +15,7 @@ namespace DynamicRagdollSystem
 		const float now = NowSeconds();
 		PollSettings(now);
 		ScanForBurning(now);
+		ProcessPendingKnocks();  // before ProcessPending: a knocked NPC gets no new reaction
 		ProcessPending();
 		{
 			std::scoped_lock lock{ g_mutex };
@@ -175,6 +176,9 @@ namespace DynamicRagdollSystem
 			g_deathMoveVel.clear();
 			g_burningDeaths.clear();
 			g_headless.clear();
+			g_hitBursts.clear();
+			g_lastKnock.clear();
+			g_pendingKnocks.clear();
 		}
 		std::scoped_lock lock{ g_driveMutex };
 		g_drives.clear();
