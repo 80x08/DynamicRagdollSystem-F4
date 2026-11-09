@@ -19,6 +19,8 @@ fCooldown = 0.1
 fReactionTime = 1.5
 # Body stiffness right after the hit, as a fraction of normal (0 = fully limp, 1 = no give). Range 0-1.
 fHitSoftness = 0.1
+# fHitSoftness for NPCs in power armor. Range 0-1.
+fPowerArmorHitSoftness = 0.5
 # Seconds to firm back up to full stiffness. Range 0.05-10.
 fRecoverTime = 0.8
 # Seconds at the end of the reaction to blend back to pure animation. Range 0-2.

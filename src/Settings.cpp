@@ -27,6 +27,8 @@ fCooldown = 0.1
 fReactionTime = 1.5
 # Body stiffness right after the hit, as a fraction of normal (0 = fully limp, 1 = no give). Range 0-1.
 fHitSoftness = 0.1
+# fHitSoftness for NPCs in power armor. Range 0-1.
+fPowerArmorHitSoftness = 0.5
 # Seconds to firm back up to full stiffness. Range 0.05-10.
 fRecoverTime = 0.8
 # Seconds at the end of the reaction to blend back to pure animation. Range 0-2.
@@ -341,6 +343,7 @@ fCrawlTurnTime = 3.0
 		read("fCooldown", kCooldown, 0.0f, 60.0f);
 		read("fReactionTime", kReactionTime, 0.2f, 10.0f);
 		read("fHitSoftness", kHitSoftness, 0.0f, 1.0f);
+		read("fPowerArmorHitSoftness", kPowerArmorHitSoftness, 0.0f, 1.0f);
 		read("fRecoverTime", kRecoverTime, 0.05f, 10.0f);
 		read("fBlendOut", kBlendOut, 0.0f, 2.0f);
 		read("fHitPush", kHitPush, 0.0f, 50.0f);
@@ -463,8 +466,8 @@ fCrawlTurnTime = 3.0
 		readDeath("fDeathCatchRange", kCatchRange, 0.0f, 20.0f);
 		readDeath("fDeathKneeBend", kDeathKneeBend, 0.0f, 120.0f);
 		REX::INFO("DynamicRagdollSystem: settings: hotReload {}"sv, kIniHotReload);
-		REX::INFO("DynamicRagdollSystem: settings: minDamage {} cooldown {} reaction {} softness {} recover {} blendOut {} push {} bodyPush {} catchUp {} pushDamageRef {} pushScale {}-{} powerAttack {} blocked {}"sv,
-			kMinDamage, kCooldown, kReactionTime, kHitSoftness, kRecoverTime, kBlendOut, kHitPush, kBodyPush, kMaxCatchUpSpeed,
+		REX::INFO("DynamicRagdollSystem: settings: minDamage {} cooldown {} reaction {} softness {} paSoftness {} recover {} blendOut {} push {} bodyPush {} catchUp {} pushDamageRef {} pushScale {}-{} powerAttack {} blocked {}"sv,
+			kMinDamage, kCooldown, kReactionTime, kHitSoftness, kPowerArmorHitSoftness, kRecoverTime, kBlendOut, kHitPush, kBodyPush, kMaxCatchUpSpeed,
 			kPushDamageRef, kPushScaleMin, kPushScaleMax, kPushPowerAttackMult, kPushBlockedMult);
 		REX::INFO("DynamicRagdollSystem: burn settings: reaction {} stiffness {} arms {} flail {} shove {} ({}-{}s) fall {}-{}s force {}; down roll {} ({}-{}s) grace {}s max {}s; death twitch {}-{} roll {}-{} time {}-{}s"sv,
 			kBurnReaction, kBurnStiffness, kBurnArmStiffness, kBurnFlail, kBurnShove, kBurnShoveMin, kBurnShoveMax, kBurnFallMin, kBurnFallMax,

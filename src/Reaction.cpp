@@ -118,6 +118,11 @@ namespace DynamicRagdollSystem
 			a_hit.totalDamage < kMinDamage) {
 			return false;
 		}
+		constexpr RE::TESFormID kActorTypeTurret = 0x000B2BF3;  // on TurretWorkshop/Bubble/Tripod races
+		if (const auto* race = a_actor->race; race && race->HasKeywordID(kActorTypeTurret)) {
+			LogSkipOnce(a_actor, "hit skipped", "turret");
+			return false;
+		}
 		if (kReactHumanoidOnly && !IsHumanoid(a_actor)) {
 			LogSkipOnce(a_actor, "hit skipped", "not humanoid (bHumanoidOnly)");
 			return false;
@@ -329,7 +334,8 @@ namespace DynamicRagdollSystem
 				// and gets wrenched into odd poses; keep it firmer and let it catch up faster.
 				const auto* actor = RE::TESForm::GetFormByID<RE::Actor>(state.formID);
 				const bool attacking = actor && actor->meleeAttackState != 0;
-				const float softness = attacking ? std::max(kHitSoftness, kAttackSoftness) : kHitSoftness;
+				const float hitSoftness = actor && RE::PowerArmor::ActorInPowerArmor(*actor) ? kPowerArmorHitSoftness : kHitSoftness;
+				const float softness = attacking ? std::max(hitSoftness, kAttackSoftness) : hitSoftness;
 				const float stiffness = state.burning ? kBurnStiffness * (1.0f - 0.6f * state.burnProgress) :
 				                                        softness + (1.0f - softness) * smooth;
 				const float catchUp = attacking ? std::max(kMaxCatchUpSpeed, kAttackCatchUpSpeed) : kMaxCatchUpSpeed;

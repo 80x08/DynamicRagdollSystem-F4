@@ -275,7 +275,8 @@ namespace DynamicRagdollSystem
 	inline float kCooldown = 0.1f;          // hits on the same NPC closer than this are ignored (shotgun pellets)
 	inline float kReactionTime = 1.5f;      // how long the ragdoll is physical after a hit
 	inline float kHitSoftness = 0.1f;       // controller gains right after the hit, as a fraction of the engine defaults
-	inline float kRecoverTime = 0.8f;       // gains ramp from kHitSoftness back to 1 over this time
+	inline float kPowerArmorHitSoftness = 0.5f;  // kHitSoftness for NPCs in power armor
+	inline float kRecoverTime = 0.8f;      // gains ramp from kHitSoftness back to 1 over this time
 	inline float kBlendOut = 0.3f;          // ragdoll weight fades to 0 over the end of the reaction
 	inline float kHitPush = 8.0f;           // velocity kick on the body part that was hit, physics units/s
 	inline float kBodyPush = 5.5f;          // kick on bodies one joint from the hit body (halved per further joint), physics units/s
