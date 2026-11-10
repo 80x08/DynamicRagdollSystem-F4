@@ -1240,8 +1240,11 @@ namespace DynamicRagdollSystem
 	void Hook_KillImpl(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent, bool a_ragdollInstant)
 	{
 		// Kill moves, sync anims and furniture keep the vanilla death (forcing a ragdoll there cuts paired animations).
-		const bool npc = a_actor && !a_actor->IsPlayerRef() && !a_actor->IsDead(false) && !InLockedAnimation(a_actor);
-		if (a_actor && !a_actor->IsPlayerRef() && !a_actor->IsDead(false))
+		const bool candidate = a_actor && !a_actor->IsPlayerRef() && !a_actor->IsDead(false);
+		const bool blacklisted = candidate && IsBlacklisted(a_actor, kDeathBlacklist);  // vanilla death, animation included
+		const bool npc = candidate && !blacklisted && !InLockedAnimation(a_actor);
+		if (blacklisted) LogSkipOnce(a_actor, "death skipped", "[Death] sBlacklist");
+		else if (candidate)
 			if (const auto why = LockedReason(a_actor)) LogSkipOnce(a_actor, "death skipped", why);
 		// Stumble, grip, twitches, rolls and crawl are built for humanoid skeletons: everything else keeps the vanilla death.
 		const bool humanoid = npc && IsHumanoid(a_actor);
@@ -1260,7 +1263,7 @@ namespace DynamicRagdollSystem
 			if (humanoid || creatureJointsFit()) a_ragdollInstant = true;
 			else LogSkipOnce(a_actor, "death ragdoll", "joint check failed; keeps death animation");
 		}
-		if (tracked && IsBurning(a_actor)) {
+		if (tracked && IsBurning(a_actor) && !IsBlacklisted(a_actor, kBurnBlacklist)) {
 			std::scoped_lock lock{ g_mutex };
 			g_burningDeaths.push_back(a_actor->GetFormID());
 		}
@@ -1310,7 +1313,7 @@ namespace DynamicRagdollSystem
 					burned = kBurnDeathTwitchMax > 0.0f || kBurnDeathRollMax > 0.0f;
 				}
 			}
-			death.crawlRolled = !burned && Random() < kCrawlChance;  // burned deaths writhe instead
+			death.crawlRolled = !burned && Random() < kCrawlChance && !IsBlacklisted(actor, kCrawlBlacklist);  // burned deaths writhe instead
 			if (!death.stumble && !death.grip && !moves && !burned && !death.crawlRolled) {
 				REX::INFO("DynamicRagdollSystem: {:08X} death: no stumble, grip or twitch rolled; vanilla ragdoll"sv, formID);
 				continue;

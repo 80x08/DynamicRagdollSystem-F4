@@ -111,12 +111,16 @@ namespace DynamicRagdollSystem
 		if (logged.insert(line).second) REX::INFO("DynamicRagdollSystem: {}"sv, line);
 	}
 
-	// ActorTypeTurret keyword, on the TurretWorkshop/Bubble/Tripod races.
-	bool IsTurret(RE::Actor* a_actor)
+	// The actor, its base NPC or race is on a_list, or one of their keywords is (sBlacklist).
+	bool IsBlacklisted(RE::Actor* a_actor, const std::vector<RE::TESFormID>& a_list)
 	{
-		constexpr RE::TESFormID kActorTypeTurret = 0x000B2BF3;
+		const auto* npc = a_actor->GetNPC();
 		const auto* race = a_actor->race;
-		return race && race->HasKeywordID(kActorTypeTurret);
+		std::scoped_lock lock{ g_blacklistMutex };
+		return std::any_of(a_list.begin(), a_list.end(), [&](RE::TESFormID a_id) {
+			return a_id == a_actor->GetFormID() || (npc && (a_id == npc->GetFormID() || npc->HasKeywordID(a_id))) ||
+			       (race && (a_id == race->GetFormID() || race->HasKeywordID(a_id)));
+		});
 	}
 
 	// Called for every hit before the engine applies it (DoHitMe). Returns true if a reaction was queued.
@@ -126,8 +130,8 @@ namespace DynamicRagdollSystem
 			a_hit.totalDamage < kMinDamage) {
 			return false;
 		}
-		if (IsTurret(a_actor)) {
-			LogSkipOnce(a_actor, "hit skipped", "turret");
+		if (IsBlacklisted(a_actor, kReactBlacklist)) {
+			LogSkipOnce(a_actor, "hit skipped", "[Reaction] sBlacklist");
 			return false;
 		}
 		if (kReactHumanoidOnly && !IsHumanoid(a_actor)) {

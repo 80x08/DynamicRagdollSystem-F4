@@ -10,6 +10,10 @@ bEnableHotReload = true
 [Reaction]
 # true = hit reactions only on humans, ghouls, feral ghouls and super mutants.
 bHumanoidOnly = false
+# NPCs this feature leaves alone. Each entry is a FormID of an NPC (placed reference or base), a race, or a keyword
+# on the NPC or its race. Write "Plugin.esp|0x000800" (FormID inside that plugin, works with any load order) or a
+# full load-order FormID like "0x000B2BF3". Example: ["Fallout4.esm|0x0B2BF3", "DLCCoast.esm|0x01234"].
+sBlacklist = ["Fallout4.esm|0x0B2BF3"]  # ActorTypeTurret: turrets
 # Minimum damage of a single hit that triggers a reaction. Range 0-10000.
 fMinDamage = 5.0
 # Hits on the same NPC closer together than this (seconds) are ignored, e.g. shotgun pellets. Range 0-60.
@@ -82,6 +86,8 @@ bKnockdownPowerArmor = false
 bKnockdownHumanoidOnly = true
 # true = only hits from the player count (companions and other NPCs shooting do not knock anyone down).
 bKnockdownPlayerOnly = false
+# NPCs never knocked down: by hits, and by flying ragdolls. Same format as [Reaction] sBlacklist.
+sBlacklist = ["Fallout4.esm|0x0B2BF3"]  # ActorTypeTurret: turrets
 
 [Burning]
 # true = living humanoid NPCs (humans, ghouls, super mutants) on fire stop attacking, flail their arms and stagger
@@ -89,6 +95,8 @@ bKnockdownPlayerOnly = false
 bBurnReaction = true
 # true = NPCs in power armor can burn too (burning reaction, burned-to-death writhing); false = power armor ignores fire.
 bBurnPowerArmor = false
+# NPCs that never get the burning reaction or burned-to-death writhing. Same format as [Reaction] sBlacklist.
+sBlacklist = []
 # Body stiffness while burning, as a fraction of normal (lower = more wobbly; the NPC keeps its own animation). Range 0-1.
 fBurnStiffness = 0.3
 # Arm stiffness while burning (near 0 = arms free to flail). Range 0-1.
@@ -136,6 +144,9 @@ fBurnDeathTimeMax = 10.0
 
 # true = NPCs skip the vanilla death animation and go straight to the death ragdoll (creatures whose ragdoll does not fit their skeleton keep it).
 bDisableDeathAnimation = true
+# NPCs that keep the vanilla death (death animation, no stumble, grip, twitching or crawl). Same format as
+# [Reaction] sBlacklist.
+sBlacklist = []
 # Chance the dead body tries to stay up for a moment (balance, stepping) before it collapses.
 fDeathStumbleChance = 1.0
 # Chance a head shot kill skips the stumble and collapses at once (checked after fDeathStumbleChance). Range 0-1.
@@ -244,6 +255,8 @@ bRagdollSelfCollision = true
 # (otherwise fTwitchChance decides as usual). Never after a head shot or for burned deaths. Lasts fCrawlTime;
 # fDyingEndDamage and bDyingEndOnHeadLoss end it early too. Range 0-1.
 fCrawlChance = 0.3
+# NPCs that never crawl. Same format as [Reaction] sBlacklist.
+sBlacklist = []
 # Forward speed the crawl reaches during each pull (physics units/s; running is about 4-5). Range 0-5.
 fCrawlSpeed = 0.7
 # Seconds for one reach-and-pull of an arm (the arms alternate, half of it apart). Lower = faster crawl. Range 0.4-5.

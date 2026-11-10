@@ -422,6 +422,15 @@ namespace DynamicRagdollSystem
 	inline bool  kHitKnockPowerArmor = false;
 	inline bool  kHitKnockHumanoidOnly = true;
 	inline bool  kHitKnockPlayerOnly = false;       // only hits from the player count
+	// sBlacklist per feature: FormIDs of NPCs (reference or base), races, or keywords (on the NPC base or its race)
+	// the feature leaves alone. Guarded by g_blacklistMutex (hot reload rewrites them while hooks read them).
+	constexpr RE::TESFormID kActorTypeTurret = 0x000B2BF3;
+	inline std::mutex                 g_blacklistMutex;
+	inline std::vector<RE::TESFormID> kReactBlacklist{ kActorTypeTurret };
+	inline std::vector<RE::TESFormID> kKnockBlacklist{ kActorTypeTurret };
+	inline std::vector<RE::TESFormID> kBurnBlacklist;
+	inline std::vector<RE::TESFormID> kDeathBlacklist;
+	inline std::vector<RE::TESFormID> kCrawlBlacklist;
 
 	// Death stumble controller (v0.1.x). Gains are per second; caps are torque/force, converted with dt.
 	constexpr float kJointKp = 20.0f;
@@ -825,7 +834,7 @@ namespace DynamicRagdollSystem
 	void TraceMovement(Stumble& a_stumble, RE::Actor* a_actor, float a_now);
 	bool EndStumble(const Stumble& a_stumble, RE::Actor* a_actor);
 
-	bool IsTurret(RE::Actor* a_actor);
+	bool IsBlacklisted(RE::Actor* a_actor, const std::vector<RE::TESFormID>& a_list);
 
 	// Drive.cpp
 	bool InjectRigidBodyControls(std::uintptr_t a_outputHolder, float a_stiffness, float a_weight, float a_dt, float a_catchUp,

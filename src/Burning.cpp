@@ -51,7 +51,8 @@ namespace DynamicRagdollSystem
 			const auto actor = handle.get();
 			if (!actor || actor->IsPlayerRef() || actor->IsDead(false) || actor->knockState != 0 || !actor->Get3D()) continue;
 			std::string why;
-			if (!IsHumanoid(actor.get()) || InLockedAnimation(actor.get()) || !IsBurning(actor.get(), &why)) continue;
+			if (!IsHumanoid(actor.get()) || InLockedAnimation(actor.get()) || IsBlacklisted(actor.get(), kBurnBlacklist) ||
+				!IsBurning(actor.get(), &why)) continue;
 			std::scoped_lock lock{ g_mutex };
 			if (std::any_of(g_deaths.begin(), g_deaths.end(), [&](const Death& a_d) { return a_d.formID == actor->GetFormID(); })) continue;
 			const auto it = std::find_if(g_stumbles.begin(), g_stumbles.end(),

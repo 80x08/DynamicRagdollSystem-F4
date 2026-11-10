@@ -18,6 +18,10 @@ bEnableHotReload = false
 [Reaction]
 # true = hit reactions only on humans, ghouls, feral ghouls and super mutants.
 bHumanoidOnly = false
+# NPCs this feature leaves alone. Each entry is a FormID of an NPC (placed reference or base), a race, or a keyword
+# on the NPC or its race. Write "Plugin.esp|0x000800" (FormID inside that plugin, works with any load order) or a
+# full load-order FormID like "0x000B2BF3". Example: ["Fallout4.esm|0x0B2BF3", "DLCCoast.esm|0x01234"].
+sBlacklist = ["Fallout4.esm|0x0B2BF3"]  # ActorTypeTurret: turrets
 # Minimum damage of a single hit that triggers a reaction. Range 0-10000.
 fMinDamage = 5.0
 # Hits on the same NPC closer together than this (seconds) are ignored, e.g. shotgun pellets. Range 0-60.
@@ -90,6 +94,8 @@ bKnockdownPowerArmor = false
 bKnockdownHumanoidOnly = true
 # true = only hits from the player count (companions and other NPCs shooting do not knock anyone down).
 bKnockdownPlayerOnly = false
+# NPCs never knocked down: by hits, and by flying ragdolls. Same format as [Reaction] sBlacklist.
+sBlacklist = ["Fallout4.esm|0x0B2BF3"]  # ActorTypeTurret: turrets
 
 [Burning]
 # true = living humanoid NPCs (humans, ghouls, super mutants) on fire stop attacking, flail their arms and stagger
@@ -97,6 +103,8 @@ bKnockdownPlayerOnly = false
 bBurnReaction = true
 # true = NPCs in power armor can burn too (burning reaction, burned-to-death writhing); false = power armor ignores fire.
 bBurnPowerArmor = false
+# NPCs that never get the burning reaction or burned-to-death writhing. Same format as [Reaction] sBlacklist.
+sBlacklist = []
 # Body stiffness while burning, as a fraction of normal (lower = more wobbly; the NPC keeps its own animation). Range 0-1.
 fBurnStiffness = 0.3
 # Arm stiffness while burning (near 0 = arms free to flail). Range 0-1.
@@ -144,6 +152,9 @@ fBurnDeathTimeMax = 10.0
 
 # true = NPCs skip the vanilla death animation and go straight to the death ragdoll (creatures whose ragdoll does not fit their skeleton keep it).
 bDisableDeathAnimation = true
+# NPCs that keep the vanilla death (death animation, no stumble, grip, twitching or crawl). Same format as
+# [Reaction] sBlacklist.
+sBlacklist = []
 # Chance the dead body tries to stay up for a moment (balance, stepping) before it collapses.
 fDeathStumbleChance = 1.0
 # Chance a head shot kill skips the stumble and collapses at once (checked after fDeathStumbleChance). Range 0-1.
@@ -252,6 +263,8 @@ bRagdollSelfCollision = true
 # (otherwise fTwitchChance decides as usual). Never after a head shot or for burned deaths. Lasts fCrawlTime;
 # fDyingEndDamage and bDyingEndOnHeadLoss end it early too. Range 0-1.
 fCrawlChance = 0.3
+# NPCs that never crawl. Same format as [Reaction] sBlacklist.
+sBlacklist = []
 # Forward speed the crawl reaches during each pull (physics units/s; running is about 4-5). Range 0-5.
 fCrawlSpeed = 0.7
 # Seconds for one reach-and-pull of an arm (the arms alternate, half of it apart). Lower = faster crawl. Range 0.4-5.
@@ -347,6 +360,39 @@ fCrawlTurnTime = 3.0
 	}
 
 
+	// sBlacklist: "Plugin.esp|0x800" (FormID inside that plugin, any load order) or "0x000B2BF3" / 0x000B2BF3 (full
+	// load-order FormID). Plugin entries resolve once the game data is loaded (LoadSettings runs again on each save load).
+	static void ReadBlacklist(const toml::value& a_root, std::string_view a_section, std::vector<RE::TESFormID>& a_list)
+	{
+		const auto* v = Find(a_root, a_section, "sBlacklist");
+		if (!v || !v->is_array()) return;
+		auto* data = RE::TESDataHandler::GetSingleton();
+		std::vector<RE::TESFormID> ids;
+		for (const auto& entry : v->as_array()) {
+			RE::TESFormID id = 0;
+			std::string text;
+			if (entry.is_integer()) {
+				id = static_cast<RE::TESFormID>(entry.as_integer());
+				text = std::format("{:08X}", id);
+			} else if (entry.is_string()) {
+				text = entry.as_string();
+				const auto bar = text.find('|');
+				try {
+					id = static_cast<RE::TESFormID>(std::stoul(bar == std::string::npos ? text : text.substr(bar + 1), nullptr, 16));
+				} catch (const std::exception&) {
+					id = 0;
+				}
+				if (id && bar != std::string::npos) id = data ? data->LookupFormID(id & 0xFFFFFF, text.substr(0, bar)) : 0;
+			}
+			if (id) ids.push_back(id);
+			else REX::INFO("DynamicRagdollSystem: [{}] sBlacklist: '{}' not resolved (bad entry, or plugin not loaded yet)"sv, a_section, text);
+		}
+		REX::INFO("DynamicRagdollSystem: [{}] sBlacklist: {} entries"sv, a_section, ids.size());
+		std::scoped_lock lock{ g_blacklistMutex };
+		a_list = std::move(ids);
+	}
+
+
 	// bDebugLog: diagnostic logging (all REX::INFO), default on. Read before the logger starts.
 	bool DebugLogEnabled()
 	{
@@ -373,6 +419,11 @@ fCrawlTurnTime = 3.0
 		}
 		const auto read = [&](const char* a_key, float& a_value, float a_min, float a_max) { ReadFloat(root, "Reaction", a_key, a_value, a_min, a_max); };
 		ReadBool(root, "Reaction", "bHumanoidOnly", kReactHumanoidOnly);
+		ReadBlacklist(root, "Reaction", kReactBlacklist);
+		ReadBlacklist(root, "Knockdown", kKnockBlacklist);
+		ReadBlacklist(root, "Burning", kBurnBlacklist);
+		ReadBlacklist(root, "Death", kDeathBlacklist);
+		ReadBlacklist(root, "Crawl", kCrawlBlacklist);
 		read("fMinDamage", kMinDamage, 0.0f, 10000.0f);
 		read("fCooldown", kCooldown, 0.0f, 60.0f);
 		read("fReactionTime", kReactionTime, 0.2f, 10.0f);

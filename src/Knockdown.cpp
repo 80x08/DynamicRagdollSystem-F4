@@ -28,7 +28,7 @@ namespace DynamicRagdollSystem
 			const auto aggressor = a_hit.aggressor.get();
 			if (!aggressor || !aggressor->IsPlayerRef()) return;
 		}
-		if (IsTurret(a_actor) || (kHitKnockHumanoidOnly && !IsHumanoid(a_actor)) ||
+		if (IsBlacklisted(a_actor, kKnockBlacklist) || (kHitKnockHumanoidOnly && !IsHumanoid(a_actor)) ||
 			(!kHitKnockPowerArmor && RE::PowerArmor::ActorInPowerArmor(*a_actor))) return;
 		Vec3 dir{};
 		std::uint32_t hitBody = 0;
@@ -104,7 +104,7 @@ namespace DynamicRagdollSystem
 		for (const auto& handle : lists->highActorHandles) {
 			const auto actor = handle.get();
 			if (!actor || actor->IsPlayerRef() || actor->IsDead(false) || actor->knockState == 0 || actor->knockState == kKnockGetUp ||
-				actor->knockState == kKnockDown || !actor->Get3D()) continue;
+				actor->knockState == kKnockDown || !actor->Get3D() || IsBlacklisted(actor.get(), kKnockBlacklist)) continue;
 			const auto id = actor->GetFormID();
 			std::scoped_lock lock{ g_mutex };
 			if (std::any_of(g_knockdowns.begin(), g_knockdowns.end(), [&](const Death& a_d) { return a_d.formID == id; }) ||
@@ -229,7 +229,7 @@ namespace DynamicRagdollSystem
 				!actor->currentProcess || GetWorld(actor.get()) != a_world) continue;
 			const auto id = actor->GetFormID();
 			if (knocked.contains(id) || std::find(reacting.begin(), reacting.end(), id) != reacting.end() ||
-				!IsHumanoid(actor.get()) || InLockedAnimation(actor.get()) ||
+				!IsHumanoid(actor.get()) || InLockedAnimation(actor.get()) || IsBlacklisted(actor.get(), kKnockBlacklist) ||
 				(!kKnockDownPowerArmor && RE::PowerArmor::ActorInPowerArmor(*actor))) continue;
 			const auto pos = actor->GetPosition();
 			for (const auto& f : fast) {
