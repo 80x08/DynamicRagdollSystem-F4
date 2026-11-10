@@ -134,7 +134,7 @@ namespace DynamicRagdollSystem
 		auto& worldBodies = npWorld->m_bodyManager.m_bodies;
 		std::vector<DeathSample> samples;
 		for (const auto& body : a_death.bodies) {
-			if (body.index < 0 || body.index >= worldBodies.size() || worldBodies[body.index].m_id.m_value != body.id.m_value) continue;
+			if (!FindBody(worldBodies, body)) continue;
 			if (a_death.Detached(body.id.m_value)) continue;
 			samples.push_back({ &body, MotionState{}, BodyPosition(worldBodies[body.index]) });
 		}
@@ -160,7 +160,7 @@ namespace DynamicRagdollSystem
 		int feet = 0;
 		bool hitAny = false;
 		for (const auto& body : a_death.bodies) {
-			if (body.index < 0 || body.index >= worldBodies.size() || worldBodies[body.index].m_id.m_value != body.id.m_value) continue;
+			if (!FindBody(worldBodies, body)) continue;
 			if (a_death.Detached(body.id.m_value)) continue;
 			if (!trunk || body.priority < trunk->priority) trunk = &body;
 			if (!body.foot || feet >= 2) continue;
@@ -271,7 +271,7 @@ namespace DynamicRagdollSystem
 	}
 
 
-	void StepDeath(Death& a_stumble, RE::Actor* a_actor, float a_now)
+	void StepDeathStumble(Death& a_stumble, RE::Actor* a_actor, float a_now)
 	{
 		auto* world = GetWorld(a_actor);
 		auto* npWorld = world ? world->m_worldNP.get() : nullptr;
@@ -288,8 +288,7 @@ namespace DynamicRagdollSystem
 
 		auto& worldBodies = npWorld->m_bodyManager.m_bodies;
 		const auto valid = [&](const BodyRef& a_ref) {
-			return a_ref.index >= 0 && a_ref.index < worldBodies.size() && worldBodies[a_ref.index].m_id.m_value == a_ref.id.m_value &&
-			       !a_stumble.Detached(a_ref.id.m_value);
+			return FindBody(worldBodies, a_ref) && !a_stumble.Detached(a_ref.id.m_value);
 		};
 		const auto feetMidpoint = [&](Vec3& a_out) {
 			Vec3 sum{};
@@ -809,65 +808,6 @@ namespace DynamicRagdollSystem
 
 
 
-	// Living NPC in an engine ragdoll (explosion knockdown, push, fall): flying, the limbs flail; otherwise the free
-	// hands brace as it tips over. The death brace and flail, without any balance help.
-	void StepKnockdown(Death& a_down, RE::Actor* a_actor, float a_now)
-	{
-		auto* world = GetWorld(a_actor);
-		auto* npWorld = world ? world->m_worldNP.get() : nullptr;
-		if (!npWorld || !g_linearImpulse) return;
-		WorldWriteLock lock{ npWorld };
-		if (!lock.held) return;
-		if (a_down.joints.empty()) {
-			if (a_down.nextScan > a_now) return;
-			a_down.nextScan = a_now + kScanInterval;
-			ScanBodies(a_down, a_actor, npWorld);
-			if (a_down.joints.empty()) return;
-		}
-		UpdateDetached(a_down, npWorld);
-		auto& worldBodies = npWorld->m_bodyManager.m_bodies;
-		std::vector<DeathSample> samples;
-		for (const auto& body : a_down.bodies) {
-			if (body.index < 0 || body.index >= worldBodies.size() || worldBodies[body.index].m_id.m_value != body.id.m_value) continue;
-			const auto& b = worldBodies[body.index];
-			if (a_down.Detached(body.id.m_value) || !b.m_flags.all(RE::hknpCollisionFlagsEnum::kIsDynamic)) continue;
-			MotionState motion{};
-			if (ReadMotionState(npWorld, b, motion)) samples.push_back({ &body, motion, BodyPosition(b) });
-		}
-		if (samples.empty()) return;
-		if (a_down.targets.empty()) {  // UpdateGround only casts once a pose was captured
-			for (const auto& s : samples)
-				a_down.targets.push_back({ s.ref->id.m_value, RotationFrom(worldBodies[s.ref->index].m_transform.m_rotation), s.pos });
-			return;
-		}
-		const float dt = ControlDt(a_down.lastStep, a_now);
-		const auto [low, high] = TrunkEnds(samples);  // pelvis / SPINE1, chest
-		if (!low || !high || low == high || a_down.groundFeet <= 0) return;
-
-		// Clearance: the lowest of the feet and the trunk above the ground under it. A missed ray reads as kRayDown
-		// below the body, so a long drop counts as flying.
-		float clearance = a_down.groundValid ? low->pos.z - a_down.groundTrunk : 1.0e9f;
-		const float ground = a_down.groundValid ? a_down.groundTrunk : a_down.groundFoot[0];
-		for (int k = 0; k < a_down.groundFeet; ++k)
-			for (const auto& s : samples)
-				if (s.ref->id.m_value == a_down.groundFootId[k]) clearance = std::min(clearance, s.pos.z - a_down.groundFoot[k]);
-		if (clearance > 1.0e8f) return;
-		const float flailAmount = std::clamp((clearance - kAirborneClear) / 0.2f, 0.0f, 1.0f);
-
-		if (flailAmount > 0.0f && a_down.flail > 0.0f) {
-			const auto flailing = FlailLimbs(npWorld, a_down, a_now - a_down.start, dt, flailAmount, a_down.flail * flailAmount, 0, 0);
-			if (!a_down.flailLogged && flailing > 0) {
-				a_down.flailLogged = true;
-				REX::INFO("DynamicRagdollSystem: {:08X} knockdown: flying, flailing ({} limb joints, clearance {:.2f})"sv, a_down.formID, flailing, clearance);
-			}
-		}
-		// Brace while tipping over above the ground; flying wins the arms.
-		if (kDeathBrace > 0.0f && flailAmount < 1.0f && low->pos.z - ground > kBraceGround + 0.05f) {
-			const float lean = std::acos(std::clamp(Unit(Sub(high->pos, low->pos)).z, -1.0f, 1.0f));
-			ApplyBrace(a_down, npWorld, samples, dt, lean, 1.0f - flailAmount, ground);
-		}
-	}
-
 
 	// Whole-body roll about the trunk's long axis (pelvis → chest, through the trunk centre) at a_accel rad/s^2
 	// (sign = direction). Every body gets the velocity of the rig rotating about the axis; torquing only the trunk
@@ -923,8 +863,7 @@ namespace DynamicRagdollSystem
 			if (a_crawl) {
 				a_death.grip = false;  // the arms crawl
 				a_death.crawlStart = std::max(a_now, a_death.downTime + kCrawlDelay);
-				static std::mt19937 rng{ std::random_device{}() };
-				a_death.crawlTime = std::uniform_real_distribution<float>{ kCrawlTime.min, kCrawlTime.max }(rng);
+				a_death.crawlTime = Random(kCrawlTime.min, kCrawlTime.max);
 				a_death.dyingTime = a_death.crawlStart + a_death.crawlTime - a_death.downTime;  // the entry ends with the crawl
 				REX::INFO("DynamicRagdollSystem: {:08X} crawl starts in {:.1f}s, lasts {:.1f}s"sv, a_death.formID, a_death.crawlStart - a_now, a_death.crawlTime);
 			}
@@ -1134,7 +1073,7 @@ namespace DynamicRagdollSystem
 	// After the stumble: the body lies there clutching the wound, twitching and now and then rolling, with
 	// everything decaying to fully limp over kDyingTime. Twitches are paired joint impulses (spine/legs; the
 	// gripping arm is not in the joint list); rolls are a small sideways kick on the trunk.
-	void StepDying(Death& a_death, RE::Actor* a_actor, float a_now)
+	void StepWrithe(Death& a_death, RE::Actor* a_actor, float a_now)
 	{
 		auto* world = GetWorld(a_actor);
 		auto* npWorld = world ? world->m_worldNP.get() : nullptr;
@@ -1149,8 +1088,8 @@ namespace DynamicRagdollSystem
 		const bool headOff = g_headless.contains(a_death.formID) ||
 		                     std::any_of(a_death.bodies.begin(), a_death.bodies.end(),
 								 [&](const BodyRef& a_body) { return a_body.head && a_death.Detached(a_body.id.m_value); });
-		if (!a_death.dyingStepped) {
-			a_death.dyingStepped = true;
+		if (!a_death.writheStarted) {
+			a_death.writheStarted = true;
 			a_death.headOffBefore = headOff;
 			if (headOff) {
 				a_death.roll *= kHeadlessRollScale;
@@ -1161,7 +1100,7 @@ namespace DynamicRagdollSystem
 			return;
 		}
 		for (const auto& body : a_death.bodies) {
-			if (body.index < 0 || body.index >= worldBodies.size() || worldBodies[body.index].m_id.m_value != body.id.m_value) continue;
+			if (!FindBody(worldBodies, body)) continue;
 			if (a_death.Detached(body.id.m_value)) continue;
 			MotionState motion{};
 			if (!ReadMotionState(npWorld, worldBodies[body.index], motion)) continue;
@@ -1216,24 +1155,22 @@ namespace DynamicRagdollSystem
 		// The grip holds fully for the first half, then loosens.
 		if (a_death.grip) ApplyGrip(a_death, npWorld, samples, dt, std::min(1.0f, 2.0f * strength));
 
-		static std::mt19937 rng{ std::random_device{}() };
-		std::uniform_real_distribution<float> unit{ 0.0f, 1.0f };
 		const float twitch = a_death.twitch * strength;
 		// A twitch is a short burst: the same joint is driven the same way for kTwitchBurst. A single-frame kick
 		// was eaten by joint friction and ground contact within a frame or two.
 		if (twitch > 0.0f && a_now >= a_death.nextTwitch && !a_death.joints.empty() && g_angularImpulse) {
-			a_death.nextTwitch = a_now + (0.15f + 0.35f * unit(rng)) * (1.0f + 1.5f * progress);  // spasms thin out
+			a_death.nextTwitch = a_now + (0.15f + 0.35f * Random()) * (1.0f + 1.5f * progress);  // spasms thin out
 			// Any spine/leg/arm joint except the arm that clutches the wound.
 			char gripSide = 0;
 			for (const auto& sample : samples)
 				if (sample.ref->id.m_value == a_death.gripHand) gripSide = sample.ref->side;
 			a_death.twitchJoint = -1;
 			for (int attempt = 0; attempt < 6 && a_death.twitchJoint < 0; ++attempt) {
-				const auto pick = static_cast<std::int32_t>(rng() % a_death.joints.size());
+				const auto pick = static_cast<std::int32_t>(Rng()() % a_death.joints.size());
 				const auto& candidate = a_death.joints[static_cast<std::size_t>(pick)];
 				if (!(candidate.arm && gripSide && candidate.side == gripSide) && !a_death.Detached(candidate.id.m_value)) a_death.twitchJoint = pick;
 			}
-			a_death.twitchAxis = Unit(Vec3{ unit(rng) * 2.0f - 1.0f, unit(rng) * 2.0f - 1.0f, unit(rng) * 2.0f - 1.0f });
+			a_death.twitchAxis = Unit(Vec3{ Random() * 2.0f - 1.0f, Random() * 2.0f - 1.0f, Random() * 2.0f - 1.0f });
 			// Light limbs (calves, feet, hands) twitch less: same speed change on a light part flung it high.
 			a_death.twitchScale = 1.0f;
 			if (a_death.twitchJoint >= 0) {
@@ -1260,8 +1197,8 @@ namespace DynamicRagdollSystem
 				}
 				if (child && parent) {
 					// Mostly up/sideways for the trunk and arms; legs jerk sideways only, so they do not kick up.
-					const float up = joint.leg ? 0.0f : unit(rng) * 1.5f;
-					const Vec3 dir = Unit(Vec3{ unit(rng) * 2.0f - 1.0f, unit(rng) * 2.0f - 1.0f, up });
+					const float up = joint.leg ? 0.0f : Random() * 1.5f;
+					const Vec3 dir = Unit(Vec3{ Random() * 2.0f - 1.0f, Random() * 2.0f - 1.0f, up });
 					const auto impulse = Scale(dir, kTwitchJolt * twitch * a_death.twitchScale / child->motion.inverseMass);
 					RE::hkVector4f toChild{ impulse.x, impulse.y, impulse.z, 0.0f };
 					RE::hkVector4f toParent{ -impulse.x, -impulse.y, -impulse.z, 0.0f };
@@ -1284,10 +1221,10 @@ namespace DynamicRagdollSystem
 		// for a short burst. A one-frame sideways kick only slid the body along the ground.
 		const float roll = a_death.roll * std::max(strength, kRollMinStrength);
 		if (roll > 0.0f && strength > 0.0f && a_now >= a_death.nextRoll) {
-			a_death.nextRoll = a_now + (a_death.burnDown ? kBurnRollGapMin + (kBurnRollGapMax - kBurnRollGapMin) * unit(rng)
-			                                             : kRollGap * (1.0f + unit(rng)));
+			a_death.nextRoll = a_now + (a_death.burnDown ? Random(kBurnRollGapMin, kBurnRollGapMax)
+			                                             : kRollGap * (1.0f + Random()));
 			a_death.rollEnd = a_now + kRollBurst;
-			a_death.rollSign = unit(rng) < 0.5f ? -1.0f : 1.0f;
+			a_death.rollSign = Random() < 0.5f ? -1.0f : 1.0f;
 			a_death.rollApplied = false;
 		}
 		const bool fire = a_death.burnDown || a_death.burnedToDeath;
@@ -1358,14 +1295,12 @@ namespace DynamicRagdollSystem
 		for (const auto formID : pending) {
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(formID);
 			if (!actor || !actor->Get3D() || !GetWorld(actor)) continue;
-			static std::mt19937 rng{ std::random_device{}() };
-			std::uniform_real_distribution<float> unit{ 0.0f, 1.0f };
-			const auto pick = [&](const Range& a_range) { return a_range.min + (a_range.max - a_range.min) * unit(rng); };
+			const auto pick = [&](const Range& a_range) { return Random(a_range.min, a_range.max); };
 			Death death{};
 			death.formID = formID;
-			death.stumble = unit(rng) < kDeathStumbleChance;
-			death.grip = unit(rng) < kDeathGripChance;
-			const bool moves = unit(rng) < kTwitchChance;
+			death.stumble = Random() < kDeathStumbleChance;
+			death.grip = Random() < kDeathGripChance;
+			const bool moves = Random() < kTwitchChance;
 			// Burned to death (on fire at KillImpl): its own, stronger writhing, whatever the twitch chance rolled.
 			bool burned = false;
 			{
@@ -1375,7 +1310,7 @@ namespace DynamicRagdollSystem
 					burned = kBurnDeathTwitchMax > 0.0f || kBurnDeathRollMax > 0.0f;
 				}
 			}
-			death.crawlRolled = !burned && unit(rng) < kCrawlChance;  // burned deaths writhe instead
+			death.crawlRolled = !burned && Random() < kCrawlChance;  // burned deaths writhe instead
 			if (!death.stumble && !death.grip && !moves && !burned && !death.crawlRolled) {
 				REX::INFO("DynamicRagdollSystem: {:08X} death: no stumble, grip or twitch rolled; vanilla ragdoll"sv, formID);
 				continue;
@@ -1389,15 +1324,15 @@ namespace DynamicRagdollSystem
 			death.roll = moves ? pick(powerArmor ? kPowerArmorRollStrength : kRollStrength) : 0.0f;
 			if (burned) {
 				death.burnedToDeath = true;
-				death.twitch = kBurnDeathTwitchMin + (kBurnDeathTwitchMax - kBurnDeathTwitchMin) * unit(rng);
-				death.roll = kBurnDeathRollMin + (kBurnDeathRollMax - kBurnDeathRollMin) * unit(rng);
-				death.dyingTime = kBurnDeathTimeMin + (kBurnDeathTimeMax - kBurnDeathTimeMin) * unit(rng);
+				death.twitch = Random(kBurnDeathTwitchMin, kBurnDeathTwitchMax);
+				death.roll = Random(kBurnDeathRollMin, kBurnDeathRollMax);
+				death.dyingTime = Random(kBurnDeathTimeMin, kBurnDeathTimeMax);
 				REX::INFO("DynamicRagdollSystem: {:08X} burned to death: twitch {:.2f} roll {:.2f} for {:.1f}s"sv, formID, death.twitch,
 					death.roll, death.dyingTime);
 			}
 			death.flail = pick(kFlailStrength);
 			death.start = a_now;
-			// Without a stumble, StepDeath still runs until the bodies are scanned (it then ends the stumble).
+			// Without a stumble, StepDeathStumble still runs until the bodies are scanned (it then ends the stumble).
 			death.end = a_now + (death.stumble ? pick(kDeathStumbleTime) : 5.0f);
 			REX::INFO("DynamicRagdollSystem: {:08X} death rolled: stumble {} ({:.2f}s, support {:.2f}, upright {:.2f}, braking {:.2f}) grip {} dying {:.2f}s twitch {:.2f} roll {:.2f} crawl {}"sv,
 				formID, death.stumble, death.end - a_now, death.support, death.upright, death.braking, death.grip, death.dyingTime,
@@ -1414,14 +1349,14 @@ namespace DynamicRagdollSystem
 				// dismember flag on the hit, so it rules out the crawl by itself.
 				const auto limb = it->second.limb;
 				death.headShotKill = limb == 1 || limb == 2 || limb == 5 || limb == 0x10;
-				if (death.headShotKill && death.stumble && unit(rng) < kHeadshotSkipStumbleChance) {
+				if (death.headShotKill && death.stumble && Random() < kHeadshotSkipStumbleChance) {
 					death.stumble = false;
 					death.end = a_now + 5.0f;  // as a death rolled without a stumble
 					REX::INFO("DynamicRagdollSystem: {:08X} head shot: stumble skipped"sv, formID);
 				}
 				// Explosion deaths are flung: no balance help (support/upright/braking), the blast push, and the limbs
 				// flail while airborne. The stumble machinery still runs for the joints, grip and flailing.
-				if (it->second.explosion && unit(rng) >= kExplosionStumbleChance) {
+				if (it->second.explosion && Random() >= kExplosionStumbleChance) {
 					if (!death.stumble) death.end = a_now + pick(kDeathStumbleTime);
 					death.stumble = true;
 					death.support = 0.0f;

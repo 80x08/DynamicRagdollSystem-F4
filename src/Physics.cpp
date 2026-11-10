@@ -712,7 +712,7 @@ namespace DynamicRagdollSystem
 	{
 		auto& bodies = a_world->m_bodyManager.m_bodies;
 		const auto info = [&](const BodyRef& a_b) -> std::int64_t {
-			if (a_b.index < 0 || a_b.index >= bodies.size() || bodies[a_b.index].m_id.m_value != a_b.id.m_value) return -1;
+			if (!FindBody(bodies, a_b)) return -1;
 			return bodies[a_b.index].m_collisionFilterInfo;
 		};
 		std::uint32_t added = 0;
@@ -756,13 +756,11 @@ namespace DynamicRagdollSystem
 	void InitFlail(Stumble& a_stumble)
 	{
 		if (a_stumble.flailAxes.size() == a_stumble.joints.size()) return;
-		static std::mt19937 rng{ std::random_device{}() };
-		std::uniform_real_distribution<float> unit{ 0.0f, 1.0f };
 		a_stumble.flailAxes.clear();
 		a_stumble.flailRhythm.clear();
 		for (std::size_t i = 0; i < a_stumble.joints.size(); ++i) {
-			a_stumble.flailAxes.push_back(Unit(Vec3{ unit(rng) * 2.0f - 1.0f, unit(rng) * 2.0f - 1.0f, unit(rng) * 2.0f - 1.0f }));
-			a_stumble.flailRhythm.push_back({ 6.2831853f * (1.2f + 1.0f * unit(rng)), 6.2831853f * unit(rng) });
+			a_stumble.flailAxes.push_back(Unit(Vec3{ Random() * 2.0f - 1.0f, Random() * 2.0f - 1.0f, Random() * 2.0f - 1.0f }));
+			a_stumble.flailRhythm.push_back({ 6.2831853f * (1.2f + 1.0f * Random()), 6.2831853f * Random() });
 		}
 	}
 

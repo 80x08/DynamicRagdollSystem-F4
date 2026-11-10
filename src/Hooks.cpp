@@ -3,7 +3,7 @@
 namespace DynamicRagdollSystem
 {
 
-	// Burn-down: StepDeath only scans the bodies; go to the dying phase (writhing) right after.
+	// Burn-down: StepDeathStumble only scans the bodies; go to the dying phase (writhing) right after.
 	static bool InDeathStumble(const Death& a_death, float a_now)
 	{
 		return a_now < a_death.end && !(a_death.burnDown && !a_death.joints.empty());
@@ -130,7 +130,7 @@ namespace DynamicRagdollSystem
 					continue;
 				}
 				// Rays here, once per frame: the pick takes the world read lock, which the step listener can't (the
-				// engine holds the write lock there). StepDeath/StepDying run per Havok step in OnHavokStep.
+				// engine holds the write lock there). StepDeathStumble/StepWrithe run per Havok step in OnHavokStep.
 				if (GetWorld(actor) == a_world) {
 					if (InDeathStumble(*it, now)) {
 						UpdateGround(*it, actor, a_world);
@@ -151,7 +151,7 @@ namespace DynamicRagdollSystem
 					it = g_knockdowns.erase(it);
 					continue;
 				}
-				if (GetWorld(actor) == a_world) UpdateGround(*it, actor, a_world);  // StepKnockdown: OnHavokStep
+				if (GetWorld(actor) == a_world) UpdateGround(*it, actor, a_world);  // StepKnockdownFall: OnHavokStep
 				++it;
 			}
 		}
@@ -203,12 +203,12 @@ namespace DynamicRagdollSystem
 			for (auto& death : g_deaths) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(death.formID);
 				if (!actor || GetWorld(actor) != a_world) continue;
-				if (InDeathStumble(death, now)) StepDeath(death, actor, now);
-				else StepDying(death, actor, now);
+				if (InDeathStumble(death, now)) StepDeathStumble(death, actor, now);
+				else StepWrithe(death, actor, now);
 			}
 			for (auto& down : g_knockdowns) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(down.formID);
-				if (actor && GetWorld(actor) == a_world) StepKnockdown(down, actor, now);
+				if (actor && GetWorld(actor) == a_world) StepKnockdownFall(down, actor, now);
 			}
 		}
 		g_stepDt = 0.0f;

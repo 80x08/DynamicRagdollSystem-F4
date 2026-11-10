@@ -48,6 +48,19 @@ namespace DynamicRagdollSystem
 		return std::chrono::duration<float>(Clock::now() - s_start).count();
 	}
 
+	// One random generator per thread (the hooks run on several).
+	inline std::mt19937& Rng()
+	{
+		thread_local std::mt19937 rng{ std::random_device{}() };
+		return rng;
+	}
+
+	// Uniform random float between a_min and a_max (either order: the ranges come from the user's settings).
+	inline float Random(float a_min = 0.0f, float a_max = 1.0f)
+	{
+		return a_min + (a_max - a_min) * std::uniform_real_distribution<float>{ 0.0f, 1.0f }(Rng());
+	}
+
 	struct BodyRef
 	{
 		std::int32_t   index{ -1 };
@@ -67,6 +80,14 @@ namespace DynamicRagdollSystem
 		bool           knee{ false }; // calf body: its joint to the thigh is the knee
 		bool           head{ false }; // head or neck body
 	};
+
+	// The world body a_ref points at, or null once it is gone (index out of range or the slot holds another body).
+	template <class Bodies>
+	auto* FindBody(Bodies& a_bodies, const BodyRef& a_ref)
+	{
+		return a_ref.index >= 0 && a_ref.index < a_bodies.size() && a_bodies[a_ref.index].m_id.m_value == a_ref.id.m_value ?
+		           &a_bodies[a_ref.index] : nullptr;
+	}
 
 	struct Stumble
 	{
@@ -124,7 +145,7 @@ namespace DynamicRagdollSystem
 		bool                    stumble{ true };
 		float                   flail{ 0.0f };     // rolled flail strength
 		float                   explosionPush{ 0.0f };  // blast velocity for a flung explosion death, 0 = none
-		// Ground under the body from ray casts (UpdateGround, before each StepDeath). Heights are used as shifts
+		// Ground under the body from ray casts (UpdateGround, before each StepDeathStumble). Heights are used as shifts
 		// relative to the ground at the moment of death, so a missing ray falls back to the flat captured ground.
 		bool                    groundCaptured{ false };
 		float                   groundAtDeath{ 0.0f };   // ground under the feet when the pose was captured
@@ -197,9 +218,9 @@ namespace DynamicRagdollSystem
 		float                   downTime{ 0.0f };    // when the body was first lying (dying clock), 0 = not yet
 		bool                    rollApplied{ false };
 		float                   dyingDamage{ 0.0f }; // damage taken during the dying phase (ends it at kDyingEndDamage)
-		bool                    dyingStepped{ false };  // StepDying has run once
-		bool                    headOffBefore{ false }; // head already dismembered when StepDying started
-		bool                    headCut{ false };       // head dismembered during StepDying: ends the dying phase
+		bool                    writheStarted{ false }; // StepWrithe has run once
+		bool                    headOffBefore{ false }; // head already dismembered when StepWrithe started
+		bool                    headCut{ false };       // head dismembered during StepWrithe: ends the dying phase
 		bool                    crawlRolled{ false };   // fCrawlChance hit; crawls if it lies face down when the dying phase starts
 		bool                    crawling{ false };      // dying phase is a crawl instead of twitches/rolls
 		bool                    crawlDecided{ false };  // the face-down check is done (crawling or not)
@@ -789,33 +810,13 @@ namespace DynamicRagdollSystem
 	bool InLockedAnimation(RE::Actor* a_actor);
 	const char* LockedReason(RE::Actor* a_actor);
 	void LogSkipOnce(RE::Actor* a_actor, std::string_view a_where, std::string_view a_why);
-	bool IsBurning(RE::Actor* a_actor, std::string* a_why = nullptr);  // a_why: which effect matched, for the log
 	bool IsHumanoid(RE::Actor* a_actor);
 	bool IsReallyDead(RE::Actor* a_actor);
-	void ScanForBurning(float a_now);
-	void ScanForKnockdowns(float a_now);
-	void StepKnockdown(Death& a_down, RE::Actor* a_actor, float a_now);
-	void ApplyBurn(Stumble& a_stumble, RE::Actor* a_actor, float a_now);
-	void UpdateBurn(Stumble& a_stumble, RE::Actor* a_actor, float a_now);
-	void SetAttackLock(Stumble& a_stumble, RE::Actor* a_actor, bool a_lock);
 	bool PerformDefaultAction(RE::Actor* a_actor, RE::DEFAULT_OBJECT a_action);
-	void StartBurnDown(RE::Actor* a_actor, float a_now);
-	void KnockOverStanding(RE::bhkWorld* a_world, float a_now);
-	void ReleaseAttackLocks();
-	void SetBurnParalysis(Death& a_death, RE::Actor* a_actor, bool a_lock);
 	void ReplaceDeath(Death&& a_death);
 	bool QueueReaction(RE::Actor* a_actor, const RE::HitData& a_hit);
 	void Hook_DoHitMe(RE::Actor* a_actor, RE::HitData* a_hit);
 	void InstallHitHook();
-	bool InjectRigidBodyControls(std::uintptr_t a_outputHolder, float a_stiffness, float a_weight, float a_dt, float a_catchUp,
-		float a_armStiffness, DriveState& a_state);
-	void Hook_DriveToPose(void* a_driver, float a_dt, void* a_context, void* a_output);
-	void Hook_MovementRagdollQuery(void* a_manager, char** a_result);
-	bool Hook_IsRagdollActive(void* a_graph);
-	void InstallGraphUpdateHook();
-	void InstallMovementHook();
-	void InstallDriveToPoseHook();
-	void InstallPostPhysicsHook();
 	void ProcessPending();
 	void ApplyHitPush(Stumble& a_stumble, RE::Actor* a_actor, float a_now);
 	float HitPushScale(const RE::HitData& a_hit);
@@ -826,7 +827,31 @@ namespace DynamicRagdollSystem
 
 	bool IsTurret(RE::Actor* a_actor);
 
+	// Drive.cpp
+	bool InjectRigidBodyControls(std::uintptr_t a_outputHolder, float a_stiffness, float a_weight, float a_dt, float a_catchUp,
+		float a_armStiffness, DriveState& a_state);
+	void Hook_DriveToPose(void* a_driver, float a_dt, void* a_context, void* a_output);
+	void Hook_MovementRagdollQuery(void* a_manager, char** a_result);
+	bool Hook_IsRagdollActive(void* a_graph);
+	void InstallGraphUpdateHook();
+	void InstallMovementHook();
+	void InstallDriveToPoseHook();
+	void InstallPostPhysicsHook();
+
+	// Burning.cpp
+	bool IsBurning(RE::Actor* a_actor, std::string* a_why = nullptr);  // a_why: which effect matched, for the log
+	void ScanForBurning(float a_now);
+	void ApplyBurn(Stumble& a_stumble, RE::Actor* a_actor, float a_now);
+	void UpdateBurn(Stumble& a_stumble, RE::Actor* a_actor, float a_now);
+	void SetAttackLock(Stumble& a_stumble, RE::Actor* a_actor, bool a_lock);
+	void StartBurnDown(RE::Actor* a_actor, float a_now);
+	void ReleaseAttackLocks();
+	void SetBurnParalysis(Death& a_death, RE::Actor* a_actor, bool a_lock);
+
 	// Knockdown.cpp
+	void ScanForKnockdowns(float a_now);
+	void StepKnockdownFall(Death& a_down, RE::Actor* a_actor, float a_now);
+	void KnockOverStanding(RE::bhkWorld* a_world, float a_now);
 	void CountKnockdownHit(RE::Actor* a_actor, const RE::HitData& a_hit);
 	void ProcessPendingKnocks();
 
@@ -837,8 +862,8 @@ namespace DynamicRagdollSystem
 	void CastCrawlRay(Death& a_death, RE::Actor* a_actor, RE::bhkWorld* a_world);
 	void ApplyBrace(Death& a_death, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_lean, float a_scale,
 		float a_ground);
-	void StepDeath(Death& a_stumble, RE::Actor* a_actor, float a_now);
-	void StepDying(Death& a_death, RE::Actor* a_actor, float a_now);
+	void StepDeathStumble(Death& a_stumble, RE::Actor* a_actor, float a_now);
+	void StepWrithe(Death& a_death, RE::Actor* a_actor, float a_now);
 	void Hook_KillImpl(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent, bool a_ragdollInstant);
 	void StartPendingDeaths(float a_now);
 
