@@ -77,7 +77,7 @@ fMultiHitMinDamage = 5.0
 # Chance a burst that meets the above knocks the NPC down (rolled once per burst). Range 0-1.
 fMultiHitChance = 0.3
 # How hard it is knocked over (engine knockdown force, as fRagdollImpactForce). Range 0-1000.
-fMultiHitForce = 7.5
+fMultiHitForce = 6.5
 
 # Heavy hit: one hit with at least this much damage (e.g. a sniper rifle, a power attack). 0 = off. Range 0-100000.
 # Killing hits are handled by [Death] instead (fDeathFlingDamage).

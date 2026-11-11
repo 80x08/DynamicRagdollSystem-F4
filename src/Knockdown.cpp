@@ -115,8 +115,12 @@ namespace DynamicRagdollSystem
 			down.stumble = false;
 			down.grip = false;
 			down.flail = Random(kFlailStrength.min, kFlailStrength.max);
+			// QueueKnock stamped g_lastKnock; the engine sets the knock state an update or two later.
+			const auto knocked = g_lastKnock.find(id);
+			down.hitKnock = knocked != g_lastKnock.end() && a_now - knocked->second < 1.0f;
+			REX::INFO("DynamicRagdollSystem: {:08X} knockdown (knock state {}): {}"sv, id, static_cast<std::uint32_t>(actor->knockState),
+				down.hitKnock ? "hit knockdown, flail" : "brace / flail");
 			g_knockdowns.push_back(std::move(down));
-			REX::INFO("DynamicRagdollSystem: {:08X} knockdown (knock state {}): brace / flail"sv, id, static_cast<std::uint32_t>(actor->knockState));
 		}
 	}
 
@@ -164,17 +168,19 @@ namespace DynamicRagdollSystem
 			for (const auto& s : samples)
 				if (s.ref->id.m_value == a_down.groundFootId[k]) clearance = std::min(clearance, s.pos.z - a_down.groundFoot[k]);
 		if (clearance > 1.0e8f) return;
-		const float flailAmount = std::clamp((clearance - kAirborneClear) / 0.2f, 0.0f, 1.0f);
+		const bool falling = low->pos.z - ground > kBraceGround + 0.05f;
+		float flailAmount = std::clamp((clearance - kAirborneClear) / 0.2f, 0.0f, 1.0f);
+		if (a_down.hitKnock && falling) flailAmount = 1.0f;  // hit knockdowns rarely leave the ground: flail all the way down
 
 		if (flailAmount > 0.0f && a_down.flail > 0.0f) {
 			const auto flailing = FlailLimbs(npWorld, a_down, a_now - a_down.start, dt, flailAmount, a_down.flail * flailAmount, 0, 0);
 			if (!a_down.flailLogged && flailing > 0) {
 				a_down.flailLogged = true;
-				REX::INFO("DynamicRagdollSystem: {:08X} knockdown: flying, flailing ({} limb joints, clearance {:.2f})"sv, a_down.formID, flailing, clearance);
+				REX::INFO("DynamicRagdollSystem: {:08X} knockdown: flailing ({} limb joints, clearance {:.2f})"sv, a_down.formID, flailing, clearance);
 			}
 		}
 		// Brace while tipping over above the ground; flying wins the arms.
-		if (kDeathBrace > 0.0f && flailAmount < 1.0f && low->pos.z - ground > kBraceGround + 0.05f) {
+		if (kDeathBrace > 0.0f && flailAmount < 1.0f && falling) {
 			const float lean = std::acos(std::clamp(Unit(Sub(high->pos, low->pos)).z, -1.0f, 1.0f));
 			ApplyBrace(a_down, npWorld, samples, dt, lean, 1.0f - flailAmount, ground);
 		}

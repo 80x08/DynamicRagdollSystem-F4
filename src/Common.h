@@ -174,6 +174,7 @@ namespace DynamicRagdollSystem
 		float                   knockPeak{ 0.0f }; // largest extra speed (knockback) seen in the knock window
 		bool                    knockLogged{ false };
 		bool                    flailLogged{ false };
+		bool                    hitKnock{ false };  // knockdown started by a multi-hit / heavy hit: flails the whole fall
 		bool                    grip{ true };
 		float                   support{ 0.0f };
 		float                   upright{ 0.0f };
@@ -414,7 +415,7 @@ namespace DynamicRagdollSystem
 	inline float kMultiHitWindow = 0.05f;           // s from the first hit of a burst
 	inline float kMultiHitMinDamage = 5.0f;         // total damage of the counted hits must also reach this
 	inline float kMultiHitChance = 0.3f;            // rolled once per burst that reaches kMultiHitCount
-	inline float kMultiHitForce = 7.5f;             // engine explosion knockdown magnitude
+	inline float kMultiHitForce = 6.5f;             // engine explosion knockdown magnitude
 	inline float kHeavyHitDamage = 75.0f;           // one hit with at least this damage (0 = off)
 	inline float kHeavyHitChance = 0.3f;
 	inline float kHeavyHitForce = 6.0f;
