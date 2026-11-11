@@ -3,7 +3,7 @@ includes("lib/commonlibf4")
 
 -- set project constants
 set_project("DynamicRagdollSystem")
-set_version("1.0.2")
+set_version("1.1.0")
 set_license("GPL-3.0")
 set_languages("c++23")
 set_warnings("allextra")

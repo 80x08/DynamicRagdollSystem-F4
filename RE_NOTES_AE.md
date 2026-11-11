@@ -151,6 +151,51 @@ All handled in code (`InstallMovementHook` / `Hook_IsRagdollActive`, `GraphVisit
 4. Raw offsets in `InstallGraphUpdateHook` (`0x161D9F4`, `0x1627BD0`) need per-runtime values: AE `0x131D489` and
    slot 19 `0x1328130`, or derive them from IDs 2256850 + `0x69` and the vtable slot.
 
+### Ragdoll root `lockTranslation` (crouched NPCs float during hit reactions)
+
+Symptom: on AE only, an NPC hit while crouched or in cover rose ~36 units during the reaction (bones still crouched),
+then dropped when the reaction ended. Standing NPCs had their trunk moved ~16 up and their sideways COM offset removed.
+OG followed the animation.
+
+Cause: `driveToPose` builds its targets by mapping the animation pose onto the ragdoll skeleton
+(`hkaSkeletonMapper::mapPose`, mode 2 = enforce constraints against the current pose). The last step
+(OG `0x141886510`, AE `0x141492BE0`, identical) gives every **parentless** bone with `lockTranslation` set its
+**reference-pose** translation. On AE the ragdoll root (pelvis) has the flag, so its drive target was always the
+standing reference pelvis, model space (0, 0, 68.9) game units, whatever the animation was doing. Measured by
+hooking the rigid-body controller call (AE 2258034 + `0x127D`, `call 0x1414AC9E0`): crouched animation COM 31–36 →
+root target 68.9 on every call. On OG the flag is presumably clear (OG reactions follow the animation); not read
+directly.
+
+Path (same offsets in both builds):
+
+| Step | OG | AE |
+|---|---|---|
+| map anim pose → ragdoll pose | `0x1416FF870` | `0x141395BC0` |
+| `mapPose` | `0x1418733E0` | `0x1414853D0` |
+| enforce constraints (mode 2) | `0x141886510` | `0x141492BE0` |
+
+- Driver `+0x68` → `+0x78` → `+0x30` = mapper (anim → ragdoll); mapper `+0x10` animation skeleton, `+0x18`
+  ragdoll skeleton.
+- `hkaSkeleton`: parents `+0x18` (s16 each), bones `+0x28` (`hkaBone` 0x10 bytes: name, `lockTranslation` byte at
+  `+8`), bone count `+0x30`.
+
+Fix (`UnlockRagdollRoot` in `Drive.cpp`, AE only): on the first drive call of a reaction, clear `lockTranslation`
+on every parentless bone of the ragdoll skeleton. It logs once when it clears a flag.
+
+Not the cause (all identical in OG and AE): the graph update and `Move` "ragdoll active" paths, `driveToPose`
+itself, the world-from-model listener (`BSRagdollDriverInterface` vfunc `+0x10`: actor position and rotation, scale
+1), the local → model scaling (`0x141395AF0`), the collision filter pair check, and the layer masks. Also not
+collision: the ragdoll's layer 33 does not collide with ground/static, and the actor's own controller, weapon and
+extra biped body are in the ragdoll's group, so the pair check skips them.
+
+Open: where the flag comes from. It is skeleton data, so either the asset (ragdoll skeleton in the character
+`skeleton.hkx`, possibly a different AE archive or an AE-only mod) or AE's loader setting it. Not checked.
+
+Side effects of clearing it: the ragdoll skeleton is a shared resource (every actor with that ragdoll), so the flag
+stays clear for the session. Any vanilla `driveToPose` mapping onto it (knockdown/get-up blending, other driven
+ragdolls) then places the root from the animation, as OG does. The flag is not saved; if the resource reloads, the
+next reaction clears it again. Only the mapper's enforce step was checked as a reader of the flag.
+
 ---
 
 ## Redoing this for a new runtime

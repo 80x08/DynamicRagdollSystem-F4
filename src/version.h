@@ -1,9 +1,9 @@
 ﻿namespace Version
 {
     inline constexpr std::size_t MAJOR = 1;
-    inline constexpr std::size_t MINOR = 0;
+    inline constexpr std::size_t MINOR = 1;
     inline constexpr std::size_t PATCH = 0;
-    inline constexpr auto NAME = "1.0.2"sv;
+    inline constexpr auto NAME = "1.1.0"sv;
     inline constexpr auto PROJECT = "DynamicRagdollSystem"sv;
 }
 
