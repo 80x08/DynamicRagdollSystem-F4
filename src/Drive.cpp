@@ -89,11 +89,12 @@ namespace DynamicRagdollSystem
 
 
 	// driveToPose maps the animation onto the ragdoll skeleton (hkaSkeletonMapper::mapPose, mode 2), which ends by
-	// giving every parentless bone flagged lockTranslation its reference-pose translation. On AE (1.11.240) the ragdoll
-	// root has that flag: its target stayed at the standing pelvis height (68.9 up), so crouched NPCs floated. OG has
-	// it clear. Clear it so the root follows the animation. Driver +0x68 -> +0x78 -> +0x30 mapper, +0x18 ragdoll
+	// giving every parentless bone flagged lockTranslation its reference-pose translation. On AE (1.11.240) humans map
+	// onto 'Ragdoll_NPC COM' from skeleton.hkx, whose root has that flag: the target stayed at the standing pelvis
+	// height (68.9 up), so crouched NPCs floated. OG maps onto the .nif ragdoll skeleton (root clear). See
+	// RE_NOTES_AE.md. Clear it so the root follows the animation. Driver +0x68 -> +0x78 -> +0x30 mapper, +0x18 ragdoll
 	// skeleton: parents +0x18 (s16), bones +0x28 (0x10 each, lockTranslation at +8), count +0x30.
-	// The skeleton is shared by every actor with this ragdoll; vanilla only reads the flag in this mapping.
+	// The skeleton is shared by every human; only this mapping step was checked as a reader of the flag.
 	static void UnlockRagdollRoot(std::uintptr_t a_driver, RE::TESFormID a_formID)
 	{
 		std::uintptr_t a = 0, b = 0, mapper = 0, skeleton = 0, parents = 0, bones = 0;

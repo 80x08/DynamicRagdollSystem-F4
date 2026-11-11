@@ -163,8 +163,7 @@ Cause: `driveToPose` builds its targets by mapping the animation pose onto the r
 **reference-pose** translation. On AE the ragdoll root (pelvis) has the flag, so its drive target was always the
 standing reference pelvis, model space (0, 0, 68.9) game units, whatever the animation was doing. Measured by
 hooking the rigid-body controller call (AE 2258034 + `0x127D`, `call 0x1414AC9E0`): crouched animation COM 31–36 →
-root target 68.9 on every call. On OG the flag is presumably clear (OG reactions follow the animation); not read
-directly.
+root target 68.9 on every call. On OG the drive maps onto a different skeleton whose root is clear (see below).
 
 Path (same offsets in both builds):
 
@@ -188,11 +187,29 @@ itself, the world-from-model listener (`BSRagdollDriverInterface` vfunc `+0x10`:
 collision: the ragdoll's layer 33 does not collide with ground/static, and the actor's own controller, weapon and
 extra biped body are in the ragdoll's group, so the pair check skips them.
 
-Open: where the flag comes from. It is skeleton data, so either the asset (ragdoll skeleton in the character
-`skeleton.hkx`, possibly a different AE archive or an AE-only mod) or AE's loader setting it. Not checked.
+Where the flag comes from (checked on fresh installs, live in both runtimes):
 
-Side effects of clearing it: the ragdoll skeleton is a shared resource (every actor with that ragdoll), so the flag
-stays clear for the session. Any vanilla `driveToPose` mapping onto it (knockdown/get-up blending, other driven
+- `Meshes\Actors\Character\CharacterAssets\skeleton.hkx` (`Fallout4 - Animations.ba2`, byte-identical in OG and
+  AE) holds the animation skeleton `Root` (95 bones), a ragdoll skeleton `Ragdoll_NPC COM` (18 bones, **root
+  `lockTranslation` 1**, children 1) and the skeleton mappers.
+- `skeleton.nif` (`Fallout4 - Meshes.ba2`) embeds the physics ragdoll (`hknpRagdollData`) with its own unnamed
+  18-bone skeleton: root 0, children 1 in both runtimes. AE ships a re-exported `.nif` whose bone order matches the
+  `.hkx` (bones 10–12 under 9, 17 under 15); OG's has 10–12 under 8, 17 under 14.
+- Live, human NPCs (driver `+0x68` → `+0x78` → `+0x30` mapper, `+0x18` skeleton B, vs the ragdoll's `+0x40`):
+  - **OG:** a separate mapper per NPC; skeleton B **is** the ragdoll's `.nif` skeleton (same object), root 0.
+  - **AE:** one mapper shared by all humans, from `skeleton.hkx`; skeleton B is `Ragdoll_NPC COM`, root 1. The
+    ragdoll's own skeleton (root 0) is a different object.
+  - Creatures (8-bone ragdolls) map onto the ragdoll's own skeleton on both, so they are unaffected.
+- Likely reason, not traced in code: OG's `.nif` bone order does not match the `.hkx`, so OG drives with a mapper
+  onto the `.nif` skeleton. AE's re-exported `.nif` matches, so AE keeps the `.hkx` mapper, locked root included.
+  AE's graph setup `FUN_14131E6D0` (called from `0x140819480` / `0x140819F10`) can rebuild ragdoll skeleton copies
+  and mappers: it copies the bones, sets `lockTranslation` = 1 on every bone with a parent, and clears it along one
+  root → bone chain. It is skipped when the ragdoll skeleton's children are all locked, as they are here.
+
+So the locked root was in the data all along; AE's re-exported `.nif` exposed it.
+
+Side effects of clearing it: on AE the cleared skeleton is `Ragdoll_NPC COM`, shared by every human NPC, so the
+flag stays clear for the session. Any vanilla `driveToPose` mapping onto it (knockdown/get-up blending, other driven
 ragdolls) then places the root from the animation, as OG does. The flag is not saved; if the resource reloads, the
 next reaction clears it again. Only the mapper's enforce step was checked as a reader of the flag.
 
