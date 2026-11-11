@@ -88,6 +88,31 @@ namespace DynamicRagdollSystem
 	}
 
 
+	// driveToPose maps the animation onto the ragdoll skeleton (hkaSkeletonMapper::mapPose, mode 2), which ends by
+	// giving every parentless bone flagged lockTranslation its reference-pose translation. On AE (1.11.240) the ragdoll
+	// root has that flag: its target stayed at the standing pelvis height (68.9 up), so crouched NPCs floated. OG has
+	// it clear. Clear it so the root follows the animation. Driver +0x68 -> +0x78 -> +0x30 mapper, +0x18 ragdoll
+	// skeleton: parents +0x18 (s16), bones +0x28 (0x10 each, lockTranslation at +8), count +0x30.
+	// The skeleton is shared by every actor with this ragdoll; vanilla only reads the flag in this mapping.
+	static void UnlockRagdollRoot(std::uintptr_t a_driver, RE::TESFormID a_formID)
+	{
+		std::uintptr_t a = 0, b = 0, mapper = 0, skeleton = 0, parents = 0, bones = 0;
+		std::int32_t   count = 0;
+		if (!ReadField(a_driver, 0x68, a) || !a || !ReadField(a, 0x78, b) || !b || !ReadField(b, 0x30, mapper) || !mapper ||
+			!ReadField(mapper, 0x18, skeleton) || !skeleton || !ReadField(skeleton, 0x18, parents) || !ReadField(skeleton, 0x28, bones) ||
+			!ReadField(skeleton, 0x30, count) || !parents || !bones || count <= 0 || count > kMaxRagdollBones)
+			return;
+		for (std::int32_t i = 0; i < count; ++i) {
+			std::int16_t parent = 0;
+			std::uint8_t locked = 0;
+			if (!ReadField(parents, i * 2, parent) || parent != -1 || !ReadField(bones, i * 0x10 + 8, locked) || !locked) continue;
+			*reinterpret_cast<std::uint8_t*>(bones + i * 0x10 + 8) = 0;
+			REX::INFO("DynamicRagdollSystem: {:08X} ragdoll root bone {} had lockTranslation (drive target pinned to the reference pose); cleared"sv,
+				a_formID, i);
+		}
+	}
+
+
 	void Hook_DriveToPose(void* a_driver, float a_dt, void* a_context, void* a_output)
 	{
 		float poseScale = 1.0f;
@@ -95,7 +120,7 @@ namespace DynamicRagdollSystem
 			std::scoped_lock lock{ g_driveMutex };
 			if (const auto it = g_drives.find(reinterpret_cast<std::uintptr_t>(a_driver)); it != g_drives.end()) {
 				auto& state = it->second;
-				++state.calls;
+				if (state.calls++ == 0) UnlockRagdollRoot(reinterpret_cast<std::uintptr_t>(a_driver), state.formID);
 				poseScale = state.poseScale;
 				const float now = NowSeconds();
 				const float recover = std::clamp((now - state.start) / kRecoverTime, 0.0f, 1.0f);
