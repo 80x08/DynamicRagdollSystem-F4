@@ -86,9 +86,6 @@ bKnockdownPowerArmor = false
 bKnockdownHumanoidOnly = true
 # true = only hits from the player count (companions and other NPCs shooting do not knock anyone down).
 bKnockdownPlayerOnly = false
-# Chance a knocked-down NPC clutches the spot the last hit struck (within 2s before the knockdown) while it lies there.
-# Range 0-1.
-fKnockdownGripChance = 0.5
 # NPCs never knocked down: by hits, and by flying ragdolls. Same format as [Reaction] sBlacklist.
 sBlacklist = ["Fallout4.esm|0x0B2BF3"]  # ActorTypeTurret: turrets
 
