@@ -109,7 +109,18 @@ actor->currentProcess->middleHigh->animationGraphManager   (BSAnimationGraphMana
 ```
 Arrays are `hkArray` {ptr, s32 size, u32 capacityAndFlags}. Human ragdoll: 18 bones/bodies, 9 constraint joints
 to dynamic parents. Body names via `bhkUtilFunctions::GetAVObjectFromBodyID`: `COM`, `SPINE1`, `SPINE2`,
-`Chest`, `*_Thigh`, `*_Calf`, `*_Foot`, `*Arm*`, `*Hand*` (prefix `L`/`R`). `COM` is not a physical bone.
+`Chest`, `*_Thigh`, `*_Calf`, `*_Foot`, `*Arm*`, `*Hand*` (prefix `L`/`R`). `COM` is not an animation bone but it
+**is** the ragdoll's root body and plays the pelvis: there is no `Pelvis` body, and the thighs and SPINE1 hang off
+COM. A name test for "Pelvis" never matches a human (it left COM, the heaviest body at 18 kg, with no trunk role).
+Ragdoll skeleton bone names (string table in live memory, 1.10.163; table order, not necessarily bone indices,
+since the log has SPINE1/SPINE2/Chest at bones 2/5/8): `Ragdoll_NPC COM`, `L Thigh`, `R Thigh`, `Spine`, `L Calf`,
+`R Calf`, `Spine1`, `L Foot`, `R Foot`, `Spine2`, `L UpperArm`, `Neck`, `R UpperArm`, `L Forearm`, `Head`,
+`R Forearm`, `L Hand`, `R Hand`. No pelvis among the 18. Ragdoll `Spine`/`Spine1`/`Spine2` presumably carry body
+nodes `SPINE1`/`SPINE2`/`Chest` (inferred from the parent chain, not traced).
+
+Editor IDs of most forms (races included, e.g. `SynthGen1Race`) are not kept in memory: a string search finds
+nothing. Look them up in the ESM instead (RACE group, `EDID` subrecord): `SynthGen1Race` 0x0E8D09,
+`SynthGen2Race` 0x10BD65, `SynthGen2RaceValentine` 0x2261A4.
 
 A living NPC's ragdoll bodies are **always in the world** (keyframed, for hit detection) even though the
 graph is not "added" (graph+0x3B8 = 0, interface not added).
@@ -286,7 +297,10 @@ while the ragdoll is driven.
   knockState: a prone animation, no ragdoll.
 - `AIProcess::KnockExplosion(actor, location, magnitude)` ID 533106 `0x140E73F40` → `0x140D598B0`: queues task type
   10 {actor (ref-counted), x, y, z, magnitude} to the same task queue / unpacker as DoHitMe (`TaskUnpackFunc`). This is
-  the explosion knockdown (real ragdoll + get-up). Used by DynamicRagdollSystem for burning falls *(effect in game being tested)*.
+  the explosion knockdown (real ragdoll + get-up). Used by DynamicRagdollSystem for burning falls and hit knockdowns.
+  The push gives every ragdoll body the same speed (no falloff from the location: the whole rig moves as one block).
+  Magnitude 0 still ragdolls the actor and it still gets up, just without the engine push; hit knockdowns use that
+  and apply their own push falling off with distance from the bullet's impact point (`DamageImpactData` location).
 - `Actor::KillImpl(attacker, damage, sendEvent, ragdollInstant)` vfunc `0x117` `0x140DB27B0` (vtable entry
   `0x142D3FC70`): with `ragdollInstant` → `0x140D70010` (instant ragdoll); without → performs the death action
   (default object `+0x300`, death animation). Death ragdoll bodies are dynamic on layer 32.
