@@ -179,6 +179,7 @@ namespace DynamicRagdollSystem
 			g_hitBursts.clear();
 			g_lastKnock.clear();
 			g_pendingKnocks.clear();
+			g_hitKicks.clear();
 		}
 		std::scoped_lock lock{ g_driveMutex };
 		g_drives.clear();

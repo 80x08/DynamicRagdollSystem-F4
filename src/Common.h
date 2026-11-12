@@ -144,6 +144,10 @@ namespace DynamicRagdollSystem
 		// Rolled once per death from the settings chances/ranges.
 		bool                    stumble{ true };
 		float                   flail{ 0.0f };     // rolled flail strength
+		bool                    kickPending{ false };  // hit knockdown: own push with falloff, applied once the bodies are scanned
+		Vec3                    kickPoint{};       // game units
+		Vec3                    kickDir{};
+		float                   kickSpeed{ 0.0f };
 		float                   explosionPush{ 0.0f };  // blast velocity for a flung explosion death, 0 = none
 		// Ground under the body from ray casts (UpdateGround, before each StepDeathStumble). Heights are used as shifts
 		// relative to the ground at the moment of death, so a missing ray falls back to the flat captured ground.
@@ -419,6 +423,8 @@ namespace DynamicRagdollSystem
 	inline float kHeavyHitDamage = 75.0f;           // one hit with at least this damage (0 = off)
 	inline float kHeavyHitChance = 0.3f;
 	inline float kHeavyHitForce = 6.0f;
+	inline float kHitKnockReach = 60.0f;         // game units from the impact point where the push is at its minimum
+	inline float kHitKnockMinFraction = 0.05f;   // push of the farthest bodies, fraction of the force
 	inline float kHitKnockCooldown = 3.0f;          // s after a knockdown before the next one (either kind)
 	inline bool  kHitKnockPowerArmor = false;
 	inline bool  kHitKnockHumanoidOnly = true;
@@ -532,6 +538,8 @@ namespace DynamicRagdollSystem
 		int   hits{ 0 };
 		float damage{ 0.0f };
 		Vec3  dir{};        // sum of the hit directions
+		Vec3  point{};      // sum of the valid impact points
+		int   points{ 0 };  // how many impact points are in the sum
 		bool  rolled{ false };     // chance already rolled for this burst
 	};
 	inline std::unordered_map<RE::TESFormID, HitBurst> g_hitBursts;   // [Knockdown] hits counted per NPC (g_mutex)
@@ -541,8 +549,18 @@ namespace DynamicRagdollSystem
 		RE::TESFormID formID{};
 		Vec3          dir{};
 		float         force{};
+		Vec3          point{};  // world impact point (average for a burst)
+		bool          hasPoint{ false };
 	};
-	inline std::vector<PendingKnock> g_pendingKnocks;  // hit knockdowns to start next update
+	struct HitKick
+	{
+		Vec3  point{};
+		Vec3  dir{};
+		float speed{};
+		float time{};
+	};
+	inline std::unordered_map<RE::TESFormID, HitKick> g_hitKicks;  // push to apply when the knockdown entry is made (g_mutex)
+	inline std::vector<PendingKnock> g_pendingKnocks; // hit knockdowns to start next update
 
 	// Read by the driveToPose hook (behavior-graph threads), written by the main thread.
 	// Most ragdoll bones/bodies handled (fog crawler: 65). The engine has no such limit; arrays here are fixed.

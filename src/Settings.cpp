@@ -85,6 +85,12 @@ fHeavyHitDamage = 75.0
 # Chance and force of the heavy-hit knockdown. Ranges 0-1, 0-1000.
 fHeavyHitChance = 0.3
 fHeavyHitForce = 6.0
+# Where the push comes from: the hit's impact point. Force above is the speed of the body part that was hit; the other
+# parts get less the farther they are from the impact point. Distance in game units (a body is ~130 tall).
+# Distance at which the push has fallen to the minimum below. Smaller = more localized. Range 1-1000.
+fHitKnockReach = 60.0
+# Push of the farthest body parts, as a fraction of the force (0 = they only follow through the joints). Range 0-1.
+fHitKnockMinFraction = 0.05
 
 # Seconds after a knockdown before the same NPC can be knocked down by hits again. Range 0-600.
 fKnockdownCooldown = 3.0

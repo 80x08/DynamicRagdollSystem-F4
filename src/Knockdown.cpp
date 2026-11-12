@@ -12,11 +12,21 @@ namespace DynamicRagdollSystem
 	}
 
 	// g_mutex held. Starts the cooldown and drops a not-yet-started reaction to the same hits.
-	static void QueueKnock(RE::TESFormID a_id, Vec3 a_dir, float a_force, float a_now)
+	static void QueueKnock(RE::TESFormID a_id, Vec3 a_dir, float a_force, float a_now, Vec3 a_point, bool a_hasPoint)
 	{
 		g_lastKnock[a_id] = a_now;
-		g_pendingKnocks.push_back({ a_id, Unit(a_dir), a_force });
+		g_pendingKnocks.push_back({ a_id, Unit(a_dir), a_force, a_point, a_hasPoint });
 		std::erase_if(g_pending, [&](const Pending& a_p) { return a_p.formID == a_id && !a_p.burn; });
+	}
+
+	// World impact point of a bullet hit (DamageImpactData +0x00); false when missing or not near the actor.
+	static bool ReadImpactPoint(RE::Actor* a_actor, const RE::HitData& a_hit, Vec3& a_point)
+	{
+		std::memcpy(&a_point, reinterpret_cast<const std::uint8_t*>(&a_hit.impactData), sizeof(a_point));
+		const auto pos = a_actor->GetPosition();
+		const Vec3 off = Sub(a_point, { pos.x, pos.y, pos.z });
+		const float len = Length(off);
+		return std::isfinite(len) && Length(a_point) > 1.0f && len < 250.0f;  // a body is ~130 tall
 	}
 
 	// Pellets that land on a corpse, and the killing hit itself, are not counted.
@@ -33,6 +43,8 @@ namespace DynamicRagdollSystem
 		Vec3 dir{};
 		std::uint32_t hitBody = 0;
 		ReadHitInfo(a_actor, a_hit, dir, hitBody);
+		Vec3 point{};
+		const bool hasPoint = ReadImpactPoint(a_actor, a_hit, point);
 		const auto id = a_actor->GetFormID();
 		const float now = NowSeconds();
 		std::scoped_lock lock{ g_mutex };
@@ -44,7 +56,7 @@ namespace DynamicRagdollSystem
 		if (kHeavyHitDamage > 0.0f && a_hit.totalDamage >= kHeavyHitDamage && !cooling()) {
 			const bool knock = Roll(kHeavyHitChance);
 			REX::INFO("DynamicRagdollSystem: {:08X} heavy hit: {:.1f} damage; knockdown {}"sv, id, a_hit.totalDamage, knock ? "queued" : "not rolled");
-			if (knock) QueueKnock(id, dir, kHeavyHitForce, now);
+			if (knock) QueueKnock(id, dir, kHeavyHitForce, now, point, hasPoint);
 		}
 
 		if (kMultiHitCount <= 0) return;
@@ -54,13 +66,20 @@ namespace DynamicRagdollSystem
 		++burst.hits;
 		burst.damage += a_hit.totalDamage;
 		burst.dir = Add(burst.dir, dir);
+		if (hasPoint) {
+			burst.point = Add(burst.point, point);
+			++burst.points;
+		}
 		if (burst.rolled || burst.hits < kMultiHitCount || burst.damage < kMultiHitMinDamage) return;
 		burst.rolled = true;    // one roll per burst: the remaining pellets do not re-roll
 		if (cooling()) return;  // also covers a heavy hit of this burst that already knocked
 		const bool knock = Roll(kMultiHitChance);
 		REX::INFO("DynamicRagdollSystem: {:08X} multi-hit: {} hits, {:.1f} damage in {:.3f}s; knockdown {}"sv, id, burst.hits, burst.damage,
 			now - burst.start, knock ? "queued" : "not rolled");
-		if (knock) QueueKnock(id, burst.dir, kMultiHitForce, now);
+		if (knock) {
+			const bool avg = burst.points > 0;  // pellets so far; the average is the centre of the spread
+			QueueKnock(id, burst.dir, kMultiHitForce, now, avg ? Scale(burst.point, 1.0f / burst.points) : Vec3{}, avg);
+		}
 	}
 
 	// Starts the queued knockdowns: ends a running hit reaction first (a driven reaction pins the body, as for the burn
@@ -82,11 +101,14 @@ namespace DynamicRagdollSystem
 				SetAttackLock(*it, actor, false);
 				g_stumbles.erase(it);
 			}
+			// The engine's own push gives every body the same speed. With an impact point: force 0 (the engine skips its
+			// push but still ragdolls the actor) and our own push with falloff, applied in StepKnockdownFall.
 			auto from = actor->GetPosition();
 			from.x -= a_knock.dir.x * 50.0f;
 			from.y -= a_knock.dir.y * 50.0f;
 			from.z += 50.0f;
-			actor->currentProcess->KnockExplosion(actor, from, a_knock.force);
+			if (a_knock.hasPoint) g_hitKicks[a_knock.formID] = { a_knock.point, a_knock.dir, a_knock.force, NowSeconds() };
+			actor->currentProcess->KnockExplosion(actor, from, a_knock.hasPoint ? 0.0f : a_knock.force);
 			REX::INFO("DynamicRagdollSystem: {:08X} hit knockdown started (force {:.1f})"sv, a_knock.formID, a_knock.force);
 			return true;
 		});
@@ -118,6 +140,15 @@ namespace DynamicRagdollSystem
 			// QueueKnock stamped g_lastKnock; the engine sets the knock state an update or two later.
 			const auto knocked = g_lastKnock.find(id);
 			down.hitKnock = knocked != g_lastKnock.end() && a_now - knocked->second < 1.0f;
+			if (const auto kick = g_hitKicks.find(id); kick != g_hitKicks.end()) {
+				if (down.hitKnock && a_now - kick->second.time < 1.0f) {
+					down.kickPending = true;
+					down.kickPoint = kick->second.point;
+					down.kickDir = kick->second.dir;
+					down.kickSpeed = kick->second.speed;
+				}
+				g_hitKicks.erase(kick);
+			}
 			REX::INFO("DynamicRagdollSystem: {:08X} knockdown (knock state {}): {}"sv, id, static_cast<std::uint32_t>(actor->knockState),
 				down.hitKnock ? "hit knockdown, flail" : "brace / flail");
 			g_knockdowns.push_back(std::move(down));
@@ -151,6 +182,21 @@ namespace DynamicRagdollSystem
 			if (ReadMotionState(npWorld, b, motion)) samples.push_back({ &body, motion, BodyPosition(b) });
 		}
 		if (samples.empty()) return;
+		if (a_down.kickPending) {  // once: speed falls off with the distance from the impact point
+			a_down.kickPending = false;
+			constexpr float kGameUnits = 69.99125f;  // game units per physics unit
+			float lowest = std::numeric_limits<float>::max();
+			for (const auto& s : samples) lowest = std::min(lowest, s.pos.z);
+			for (const auto& s : samples) {
+				const float dist = Length(Sub(Scale(s.pos, kGameUnits), a_down.kickPoint));
+				const float fall = std::max(kHitKnockMinFraction, 1.0f - dist / kHitKnockReach);
+				auto impulse = Scale(a_down.kickDir, a_down.kickSpeed * fall / s.motion.inverseMass);
+				if (s.pos.z - lowest < kFloorBodyHeight) impulse.z = std::max(impulse.z, 0.0f);  // floor-level bodies: not into the ground
+				RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
+				g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
+			}
+			REX::INFO("DynamicRagdollSystem: {:08X} hit knockdown push: speed {:.1f} from the impact point"sv, a_down.formID, a_down.kickSpeed);
+		}
 		if (a_down.targets.empty()) {  // UpdateGround only casts once a pose was captured
 			for (const auto& s : samples)
 				a_down.targets.push_back({ s.ref->id.m_value, RotationFrom(worldBodies[s.ref->index].m_transform.m_rotation), s.pos });
