@@ -405,17 +405,18 @@ namespace DynamicRagdollSystem
 				}
 			}
 
-			const bool pelvis = name.contains("Pelvis"sv) || name.contains("pelvis"sv);
+			const std::string_view nameView{ name.c_str() };
+			// FO4 human ragdolls have no pelvis bone: the root body (thighs and SPINE1 hang off it) is "COM".
+			const bool pelvis = nameView == "COM"sv || name.contains("Pelvis"sv) || name.contains("pelvis"sv);
 			const bool spine = name.contains("SPINE"sv) || name.contains("Spine"sv) || name.contains("Chest"sv);
 			const bool leg = name.contains("Leg"sv) || name.contains("Thigh"sv) || name.contains("Calf"sv) || name.contains("Foot"sv);
 			std::int32_t priority = 99;
-			if (name.contains("SPINE1"sv)) priority = 0;
+			if (pelvis) priority = -1;  // lowest trunk body (TrunkEnds low end, balance trunk)
+			else if (name.contains("SPINE1"sv)) priority = 0;
 			else if (name.contains("SPINE2"sv)) priority = 1;
 			else if (name.contains("Chest"sv)) priority = 2;
-			else if (name.contains("Pelvis"sv) || name.contains("pelvis"sv)) priority = 0;
 
 			const bool foot = name.contains("Foot"sv) || name.contains("foot"sv);
-			const std::string_view nameView{ name.c_str() };
 			const char side = nameView.starts_with("L"sv) ? 'L' : nameView.starts_with("R"sv) ? 'R' : 0;
 			const bool hand = name.contains("Hand"sv) || name.contains("hand"sv);
 			const bool arm = hand || name.contains("Arm"sv) || name.contains("arm"sv);
