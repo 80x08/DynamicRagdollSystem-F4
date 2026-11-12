@@ -460,13 +460,15 @@ fCrawlTurnTime = 3.0
 			readKnock("fHeavyHitDamage", kHeavyHitDamage, 0.0f, 100000.0f);
 			readKnock("fHeavyHitChance", kHeavyHitChance, 0.0f, 1.0f);
 			readKnock("fHeavyHitForce", kHeavyHitForce, 0.0f, 1000.0f);
+			readKnock("fHitKnockReach", kHitKnockReach, 1.0f, 1000.0f);
+			readKnock("fHitKnockMinFraction", kHitKnockMinFraction, 0.0f, 1.0f);
 			readKnock("fKnockdownCooldown", kHitKnockCooldown, 0.0f, 600.0f);
 			ReadBool(root, "Knockdown", "bKnockdownPowerArmor", kHitKnockPowerArmor);
 			ReadBool(root, "Knockdown", "bKnockdownHumanoidOnly", kHitKnockHumanoidOnly);
 			ReadBool(root, "Knockdown", "bKnockdownPlayerOnly", kHitKnockPlayerOnly);
-			REX::INFO("DynamicRagdollSystem: knockdown settings: burst {} hits in {}s, min damage {}, chance {} force {}; heavy hit {} damage, chance {} force {}; cooldown {}s power armor {} humanoid only {} player only {}"sv,
+			REX::INFO("DynamicRagdollSystem: knockdown settings: burst {} hits in {}s, min damage {}, chance {} force {}; heavy hit {} damage, chance {} force {}; reach {} min fraction {}; cooldown {}s power armor {} humanoid only {} player only {}"sv,
 				kMultiHitCount, kMultiHitWindow, kMultiHitMinDamage, kMultiHitChance, kMultiHitForce,
-				kHeavyHitDamage, kHeavyHitChance, kHeavyHitForce, kHitKnockCooldown, kHitKnockPowerArmor, kHitKnockHumanoidOnly,
+				kHeavyHitDamage, kHeavyHitChance, kHeavyHitForce, kHitKnockReach, kHitKnockMinFraction, kHitKnockCooldown, kHitKnockPowerArmor, kHitKnockHumanoidOnly,
 				kHitKnockPlayerOnly);
 		}
 		{
