@@ -1,5 +1,8 @@
 #include "Common.h"
-
+//
+// dies -> Hook_KillImpl -> remember pre-death velocity -> not in bleedout anim (IsReallyDead) -> add to death queue (g_pendingDeaths)
+// -> world update -> create controller for dead body (StartPendingDeaths) -> manipulate body for target anim
+//
 namespace DynamicRagdollSystem
 {
 
@@ -200,15 +203,27 @@ namespace DynamicRagdollSystem
 	void ApplyBrace(Death& a_death, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_lean, float a_scale,
 		float a_ground)
 	{
-		const float amount = std::clamp((a_lean - kBraceLean) / (kBraceFull - kBraceLean), 0.0f, 1.0f) * kDeathBrace * a_scale;
-		if (amount <= 0.0f) return;
+		const float wanted = std::clamp((a_lean - kBraceLean) / (kBraceFull - kBraceLean), 0.0f, 1.0f) * kDeathBrace * a_scale;
+		// Eased in and out: switching on at full strength late in the stumble yanked the arms and, through the
+		// reaction on the chest, swung the torso sideways.
+		const float ramp = kDeathBrace * dt / kBraceRampTime;
+		a_death.braceLevel += std::clamp(wanted - a_death.braceLevel, -ramp, ramp);
+		const float amount = a_death.braceLevel;
+		if (amount <= 1.0e-4f) return;
 		const auto [low, high] = TrunkEnds(samples);  // pelvis / SPINE1, chest
 		if (!low || !high || low == high) return;
 		// Fall direction = where the trunk leans; nearly upright, where the chest is moving.
 		Vec3 fall{ high->pos.x - low->pos.x, high->pos.y - low->pos.y, 0.0f };
 		if (Length(fall) < 0.05f) fall = Vec3{ high->motion.linear.x, high->motion.linear.y, 0.0f };
-		if (Length(fall) < 1.0e-3f) return;
-		fall = Unit(fall);
+		fall = Length(fall) < 1.0e-3f ? a_death.braceFall : Unit(fall);
+		// Turned slowly: following the (noisy) lean/chest velocity each frame swung the guard points side to side,
+		// and the chest with them; a feedback loop with the reaction impulse.
+		if (Length(a_death.braceFall) > 0.5f) {
+			const auto eased = Add(a_death.braceFall, Scale(Sub(fall, a_death.braceFall), std::min(1.0f, kBraceTurnRate * dt)));
+			fall = Length(eased) > 0.1f ? Unit(eased) : a_death.braceFall;
+		}
+		if (Length(fall) < 0.5f) return;
+		a_death.braceFall = fall;
 		// Head guard in the trunk's frame (stays the same shape as the body tips). Reaching straight out read as a
 		// stiff outstretched arm, not a brace.
 		const auto up = Unit(Sub(high->pos, low->pos));
@@ -314,16 +329,17 @@ namespace DynamicRagdollSystem
 			for (const auto& body : a_stumble.bodies) {
 				if (!valid(body)) continue;
 				const auto& b = worldBodies[body.index];
+				//store rotation of bodies in death pose as reference
 				a_stumble.targets.push_back({ body.id.m_value, RotationFrom(b.m_transform.m_rotation), BodyPosition(b) });
 			}
-			a_stumble.hasFeet = feetMidpoint(a_stumble.feetCaptured);
+			a_stumble.hasFeet = feetMidpoint(a_stumble.feetCaptured); //averages the positions of the valid foot bodies
 			REX::INFO("DynamicRagdollSystem: {:08X} death pose captured after {:.2f}s ({} bodies, feet {}, gravity z {:.2f})"sv, a_stumble.formID,
 				a_now - a_stumble.start, a_stumble.targets.size(), a_stumble.hasFeet, npWorld->m_gravity.z);
 		}
 		if (a_stumble.targets.empty()) return;
-		UpdateDetached(a_stumble, npWorld);
-		if (!a_stumble.stumble) {
-			a_stumble.end = a_now;  // plain ragdoll fall; grip/twitch run in the dying phase
+		UpdateDetached(a_stumble, npWorld); //check for any dismembered limb
+		if (!a_stumble.stumble) { //end if didnt roll stumble
+			a_stumble.end = a_now;  // plain ragdoll fall
 			return;
 		}
 
@@ -344,6 +360,8 @@ namespace DynamicRagdollSystem
 		//    - tilt: rotate about the feet toward the captured trunk tilt (yaw left free),
 		//    - height: spring the centre of mass to its captured height above the feet, cancel gravity,
 		//    - horizontal: only light damping, so the hit's momentum turns into a stumble.
+		// dCom - desired linear velocity
+		// dOmega - desired angluar velocity
 		using Sample = DeathSample;
 		std::vector<Sample> samples;
 		std::int32_t notDynamic = 0, noMotion = 0;
@@ -530,7 +548,9 @@ namespace DynamicRagdollSystem
 				const float phase = (a_now - a_stumble.stepStart) / a_stumble.stepTime;
 				const auto swing = std::find_if(samples.begin(), samples.end(),
 					[&](const Sample& a_s) { return a_s.ref->id.m_value == a_stumble.stepFoot; });
-				if (swing == samples.end() || phase >= 1.0f) {
+				// Drop the step once the body can no longer catch itself: a full-strength swing kept yanking the foot
+				// toward its target while the rest of the rig went limp at the end of the stumble.
+				if (swing == samples.end() || phase >= 1.0f || !grounded || catchable < 0.3f || fade < 0.15f) {
 					a_stumble.stepFoot = 0;
 					a_stumble.stepSide = 0;
 					a_stumble.nextStep = a_now + kStepCooldown;
@@ -694,7 +714,8 @@ namespace DynamicRagdollSystem
 		if (a_stumble.grip) ApplyGrip(a_stumble, npWorld, samples, dt, 1.0f);
 		a_stumble.braceAmount = 0.0f;
 		a_stumble.braceOff = -1.0f;
-		if (kDeathBrace > 0.0f && braceLean > 0.0f) ApplyBrace(a_stumble, npWorld, samples, dt, braceLean, 1.0f - std::min(flailAmount, 1.0f), groundSurface);  // flailing wins the arms
+		// Called with lean 0 too, so the brace eases out instead of cutting off at kBraceGround.
+		if (kDeathBrace > 0.0f) ApplyBrace(a_stumble, npWorld, samples, dt, braceLean, 1.0f - std::min(flailAmount, 1.0f), groundSurface);  // flailing wins the arms
 
 		// Knee flexion axes from the death pose: cross(thigh->calf, calf->foot) bends the knee further the way it
 		// already bends. A straight leg borrows the other knee's axis (both flex about the same lateral axis).
@@ -769,7 +790,8 @@ namespace DynamicRagdollSystem
 				Rotate(parentMotion.orientation, parentMotion.angular));
 			// Knees get a firmer, less faded drive: at low stiffness a loaded leg never reached its bend.
 			const float stiffness = joint.knee ? std::max(kDeathStiffness, kKneeMinStiffness) : kDeathStiffness;
-			const float jointFade = joint.knee ? std::max(fade, kKneeMinFade) : fade;
+			// Knee floor ramps out over the last 10% of the stumble instead of snapping from kKneeMinFade to 0 at the end.
+			const float jointFade = joint.knee ? std::max(fade, std::min(kKneeMinFade, 10.0f * fade)) : fade;
 			Vec3 desired = Scale(Add(Scale(errorWorld, -kJointKp * stiffness), Scale(relativeOmega, -kJointKd * stiffness)), dt * jointFade);
 			const float desiredNorm = Length(desired);
 			if (!std::isfinite(desiredNorm) || desiredNorm < 0.002f) continue;
@@ -1238,7 +1260,7 @@ namespace DynamicRagdollSystem
 
 
 	void Hook_KillImpl(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent, bool a_ragdollInstant)
-	{
+	{   //starting point for dead npc
 		// Kill moves, sync anims and furniture keep the vanilla death (forcing a ragdoll there cuts paired animations).
 		const bool candidate = a_actor && !a_actor->IsPlayerRef() && !a_actor->IsDead(false);
 		const bool blacklisted = candidate && IsBlacklisted(a_actor, kDeathBlacklist);  // vanilla death, animation included
@@ -1279,7 +1301,7 @@ namespace DynamicRagdollSystem
 		(*g_killHook)(a_actor, a_attacker, a_damage, a_sendEvent, a_ragdollInstant);
 		std::scoped_lock lock{ g_mutex };
 		if (tracked && IsReallyDead(a_actor)) {
-			g_pendingDeaths.push_back(a_actor->GetFormID());
+			g_pendingDeaths.push_back(a_actor->GetFormID()); //put dead npc into queue to process it
 		} else if (tracked) {
 			if (a_actor->IsDead(false)) LogSkipOnce(a_actor, "death skipped", std::format("essential, downed (life state {})", static_cast<std::uint32_t>(a_actor->lifeState)));
 			g_deathMoveVel.erase(a_actor->GetFormID());  // did not die after all (essential): no leftover entry
@@ -1288,7 +1310,7 @@ namespace DynamicRagdollSystem
 	}
 
 
-	void StartPendingDeaths(float a_now)
+	void StartPendingDeaths(float a_now) //for each npc in g_pendingDeaths we decide what to do with the body
 	{
 		std::vector<RE::TESFormID> pending;
 		{

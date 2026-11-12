@@ -161,6 +161,8 @@ namespace DynamicRagdollSystem
 		bool                    braceLogged{ false };
 		float                   braceAmount{ 0.0f };   // this frame's brace strength, for the log
 		float                   braceOff{ -1.0f };     // mean hand distance from its brace target, for the log
+		float                   braceLevel{ 0.0f };    // eased brace strength (ApplyBrace)
+		Vec3                    braceFall{};           // eased fall direction the brace guards against
 		float                   standHeight{ 0.0f };   // COM height above the ground on the first stumble frame
 		std::string             weapon;                // killing weapon, for the log
 		float                   damage{ 0.0f };        // killing hit damage
@@ -477,6 +479,8 @@ namespace DynamicRagdollSystem
 	constexpr float kBraceLean = 0.35f;        // rad: the hands start reaching for the ground at this lean ...
 	constexpr float kBraceFull = 0.7f;         // ... and reach fully from this lean
 	constexpr float kBraceGround = 0.2f;       // ... until the COM is this close above the ground
+	constexpr float kBraceRampTime = 0.3f;     // s for the brace to go from off to full kDeathBrace (and back)
+	constexpr float kBraceTurnRate = 4.0f;     // 1/s: how fast the guarded fall direction follows the trunk
 	// Head guard, in the trunk's frame (up = pelvis to chest, forward = fall direction): hands in front of the face,
 	// elbows (forearm bodies) forward of the chest and a bit wider, so the forearms curl up to protect the head.
 	constexpr float kGuardHandUp = 0.30f;
