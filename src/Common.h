@@ -351,10 +351,10 @@ namespace DynamicRagdollSystem
 		float min;
 		float max;
 	};
-	inline float kDeathStumbleChance = 1.0f;     // chance a death uses the balance/stepping controller
-	inline float kHeadshotSkipStumbleChance = 0.0f;  // chance a head shot kill drops the stumble it rolled
-	inline float kDeathGripChance = 0.75f;        // chance a hand clutches the body part the killing shot hit
-	inline float kTwitchChance = 0.8f;           // chance the body twitches and rolls after it falls
+	inline float kDeathStumbleChance = 0.8f;     // chance a death uses the balance/stepping controller
+	inline float kHeadshotSkipStumbleChance = 0.2f;  // chance a head shot kill drops the stumble it rolled
+	inline float kDeathGripChance = 0.65f;        // chance a hand clutches the body part the killing shot hit
+	inline float kTwitchChance = 0.65f;          // chance the body twitches and rolls after it falls
 
 	inline Range kDeathStumbleTime{ 2.3f, 2.6f }; // seconds the dead body tries to stay up before collapsing
 	inline Range kDeathSupport{ 0.6f, 0.8f };     // fraction of gravity the controller carries at the moment of death

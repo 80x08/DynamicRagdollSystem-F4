@@ -162,13 +162,13 @@ bDisableDeathAnimation = true
 # [Reaction] sBlacklist.
 sBlacklist = []
 # Chance the dead body tries to stay up for a moment (balance, stepping) before it collapses.
-fDeathStumbleChance = 1.0
+fDeathStumbleChance = 0.8
 # Chance a head shot kill skips the stumble and collapses at once (checked after fDeathStumbleChance). Range 0-1.
-fHeadshotSkipStumbleChance = 0.0
+fHeadshotSkipStumbleChance = 0.2
 # Chance one hand clutches the body part the killing shot hit, while stumbling and after falling.
-fDeathGripChance = 0.7
+fDeathGripChance = 0.65
 # Chance the body twitches and rolls on the ground after it falls.
-fTwitchChance = 0.8
+fTwitchChance = 0.65
 # Seconds the dead body fights to stay up; its strength decays steadily over this time. Range 0.2-15.
 fDeathStumbleTimeMin = 2.3
 fDeathStumbleTimeMax = 2.6
