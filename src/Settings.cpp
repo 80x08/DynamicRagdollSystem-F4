@@ -77,20 +77,20 @@ fMultiHitMinDamage = 5.0
 # Chance a burst that meets the above knocks the NPC down (rolled once per burst). Range 0-1.
 fMultiHitChance = 0.3
 # How hard it is knocked over (engine knockdown force, as fRagdollImpactForce). Range 0-1000.
-fMultiHitForce = 6.5
+fMultiHitForce = 16.5
 
 # Heavy hit: one hit with at least this much damage (e.g. a sniper rifle, a power attack). 0 = off. Range 0-100000.
 # Killing hits are handled by [Death] instead (fDeathFlingDamage).
 fHeavyHitDamage = 75.0
 # Chance and force of the heavy-hit knockdown. Ranges 0-1, 0-1000.
 fHeavyHitChance = 0.3
-fHeavyHitForce = 6.0
+fHeavyHitForce = 16.5
 # Where the push comes from: the hit's impact point. Force above is the speed of the body part that was hit; the other
 # parts get less the farther they are from the impact point. Distance in game units (a body is ~130 tall).
 # Distance at which the push has fallen to the minimum below. Smaller = more localized. Range 1-1000.
-fHitKnockReach = 60.0
+fHitKnockReach = 40.0
 # Push of the farthest body parts, as a fraction of the force (0 = they only follow through the joints). Range 0-1.
-fHitKnockMinFraction = 0.05
+fHitKnockMinFraction = 0.1
 
 # Seconds after a knockdown before the same NPC can be knocked down by hits again. Range 0-600.
 fKnockdownCooldown = 3.0
@@ -110,7 +110,7 @@ bBurnReaction = true
 # true = NPCs in power armor can burn too (burning reaction, burned-to-death writhing); false = power armor ignores fire.
 bBurnPowerArmor = false
 # NPCs that never get the burning reaction or burned-to-death writhing. Same format as [Reaction] sBlacklist.
-sBlacklist = []
+sBlacklist = ["Fallout4.esm|0x0E8D09", "Fallout4.esm|0x10BD65", "Fallout4.esm|0x2261A4"]  # SynthGen1Race, SynthGen2Race, SynthGen2RaceValentine
 # Body stiffness while burning, as a fraction of normal (lower = more wobbly; the NPC keeps its own animation). Range 0-1.
 fBurnStiffness = 0.3
 # Arm stiffness while burning (near 0 = arms free to flail). Range 0-1.
@@ -192,6 +192,9 @@ fDeathKnockbackScale = 0.4
 # weapon knockback, no balance help, limbs flail in the air. The knockback log line shows each kill's damage.
 # 0 = off. Range 0-100000.
 fDeathFlingDamage = 75.0
+# Same for a killing pellet burst (shotguns): at least this many hits landing within [Knockdown] fMultiHitWindow
+# of the first. 0 = off. Range 0-100.
+iDeathFlingPellets = 5
 # Damage a dying body (clutching/twitching/rolling after the stumble) takes before it goes limp at once, summed over
 # hits. 0 = off. Range 0-10000.
 fDyingEndDamage = 20.0
@@ -540,6 +543,11 @@ fCrawlTurnTime = 3.0
 		readDeath("fExplosionStumbleChance", kExplosionStumbleChance, 0.0f, 1.0f);
 		readDeath("fDeathKnockbackScale", kDeathKnockbackScale, 0.0f, 1.0f);
 		readDeath("fDeathFlingDamage", kDeathFlingDamage, 0.0f, 100000.0f);
+		{
+			float pellets = static_cast<float>(kDeathFlingPellets);
+			readDeath("iDeathFlingPellets", pellets, 0.0f, 100.0f);
+			kDeathFlingPellets = static_cast<int>(std::lround(pellets));
+		}
 		readDeath("fDyingEndDamage", kDyingEndDamage, 0.0f, 10000.0f);
 		ReadBool(root, "Death", "bDyingEndOnHeadLoss", kDyingEndOnHeadLoss);
 		readDeath("fHeadlessRollScale", kHeadlessRollScale, 0.0f, 1.0f);

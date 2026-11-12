@@ -184,11 +184,19 @@ namespace DynamicRagdollSystem
 			last.damage = a_hit->totalDamage;
 			last.time = NowSeconds();
 			std::scoped_lock lock{ g_mutex };
-			g_lastHit[a_actor->GetFormID()] = last;
+			auto& entry = g_lastHit[a_actor->GetFormID()];
+			// Pellet burst: hits within fMultiHitWindow of the first are counted (iDeathFlingPellets).
+			const bool sameBurst = last.time - entry.burstStart <= kMultiHitWindow;
+			last.burstStart = sameBurst ? entry.burstStart : last.time;
+			last.burstHits = (sameBurst ? entry.burstHits : 0) + 1;
+			entry = last;
 		} else if (a_hit && a_actor && !a_actor->IsPlayerRef()) {
 			// Corpse hit: count it toward finishing off a body in the dying phase (same test as the StepWrithe dispatch).
 			const float now = NowSeconds();
 			std::scoped_lock lock{ g_mutex };
+			// Pellets of the killing burst that land just after the fatal one, before the death is picked up.
+			if (const auto it = g_lastHit.find(a_actor->GetFormID()); it != g_lastHit.end() && now - it->second.burstStart <= kMultiHitWindow)
+				++it->second.burstHits;
 			for (auto& death : g_deaths)
 				if (death.formID == a_actor->GetFormID() && (now >= death.end || (death.burnDown && !death.joints.empty())))
 					death.dyingDamage += a_hit->totalDamage;

@@ -254,6 +254,8 @@ namespace DynamicRagdollSystem
 		bool          explosion{ false };
 		std::string   weapon;  // weapon name, for the log
 		float         damage{ 0.0f };
+		int           burstHits{ 0 };       // this hit plus the others since burstStart (shotgun pellets)
+		float         burstStart{ -100.0f };
 		Vec3          dir{};
 		std::uint32_t hitBody{ 0x7FFFFFFF };
 		float         time{ -100.0f };
@@ -371,6 +373,7 @@ namespace DynamicRagdollSystem
 	inline Range kFlailStrength{ 2.0f, 3.0f };     // limb flailing while a fast/airborne body flies, 0 = limp
 	inline float kDeathBrace = 2.5f;              // free hands reach for the ground when the body tips over (0 = off)
 	inline float kDeathFlingDamage = 100.0f;      // killing hits with at least this damage fling the body (0 = off)
+	inline int   kDeathFlingPellets = 5;          // a killing burst with this many hits within kMultiHitWindow flings too (0 = off)
 	inline float kDyingEndDamage = 20.0f;         // damage to the corpse during the dying phase that ends it (0 = off)
 	inline bool  kDyingEndOnHeadLoss = true;      // head dismembered during the dying phase ends it
 	inline float kHeadlessRollScale = 0.5f;       // roll strength factor when the dying phase starts without a head
@@ -421,12 +424,12 @@ namespace DynamicRagdollSystem
 	inline float kMultiHitWindow = 0.05f;           // s from the first hit of a burst
 	inline float kMultiHitMinDamage = 5.0f;         // total damage of the counted hits must also reach this
 	inline float kMultiHitChance = 0.3f;            // rolled once per burst that reaches kMultiHitCount
-	inline float kMultiHitForce = 6.5f;             // engine explosion knockdown magnitude
+	inline float kMultiHitForce = 16.5f;             // engine explosion knockdown magnitude
 	inline float kHeavyHitDamage = 75.0f;           // one hit with at least this damage (0 = off)
 	inline float kHeavyHitChance = 0.3f;
-	inline float kHeavyHitForce = 6.0f;
-	inline float kHitKnockReach = 60.0f;         // game units from the impact point where the push is at its minimum
-	inline float kHitKnockMinFraction = 0.05f;   // push of the farthest bodies, fraction of the force
+	inline float kHeavyHitForce = 16.5f;
+	inline float kHitKnockReach = 40.0f;         // game units from the impact point where the push is at its minimum
+	inline float kHitKnockMinFraction = 0.1f;    // push of the farthest bodies, fraction of the force
 	inline float kHitKnockCooldown = 3.0f;          // s after a knockdown before the next one (either kind)
 	inline bool  kHitKnockPowerArmor = false;
 	inline bool  kHitKnockHumanoidOnly = true;

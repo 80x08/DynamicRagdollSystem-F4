@@ -1390,7 +1390,8 @@ namespace DynamicRagdollSystem
 					death.explosionPush = pick(kExplosionPush);
 					death.flung = true;
 					REX::INFO("DynamicRagdollSystem: {:08X} explosion death: flung at {:.1f} (lift {:.2f})"sv, formID, death.explosionPush, kExplosionLift);
-				} else if (kDeathFlingDamage > 0.0f && it->second.damage >= kDeathFlingDamage) {
+				} else if ((kDeathFlingDamage > 0.0f && it->second.damage >= kDeathFlingDamage) ||
+						   (kDeathFlingPellets > 0 && it->second.burstHits >= kDeathFlingPellets)) {
 					// Heavy hits (e.g. a Gauss rifle) blow the body away: same as an explosion but with the weapon's own
 					// knockback kept in full instead of a blast push.
 					if (!death.stumble) death.end = a_now + pick(kDeathStumbleTime);
@@ -1399,7 +1400,8 @@ namespace DynamicRagdollSystem
 					death.upright = 0.0f;
 					death.braking = 0.0f;
 					death.flung = true;
-					REX::INFO("DynamicRagdollSystem: {:08X} heavy hit ({:.0f} damage, '{}'): flung"sv, formID, it->second.damage, it->second.weapon);
+					REX::INFO("DynamicRagdollSystem: {:08X} heavy hit ({:.0f} damage, {} pellets, '{}'): flung"sv, formID, it->second.damage,
+						it->second.burstHits, it->second.weapon);
 				}
 			} else {
 				death.hitApplied = true;  // no recent hit (script kill, fall, …): no push
