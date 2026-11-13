@@ -501,6 +501,10 @@ namespace DynamicRagdollSystem
 	constexpr float kGripKp = 60.0f;           // hand → wound spring, 1/s^2
 	constexpr float kGripKd = 10.0f;           // ... damping on the hand's velocity relative to the wound, 1/s
 	constexpr float kGripMaxAccel = 150.0f;    // per-step velocity change cap for the hand, units/s^2
+	// Hand behind the chest (tuned in RagdollLab's sim): physics units it aims in front of / out to the side of the
+	// wound (out is also how far from the pelvis's centre it swings before turning forward), over which each part of the
+	// detour ramps in, and behind the chest's centre before it starts (a hand lagging a moment behind goes straight).
+	constexpr float kGripAround = 0.3f, kGripOut = 0.35f, kGripClear = 0.1f, kGripLag = 0.05f;
 	constexpr float kTwitchAccel = 500.0f;     // rad/s^2 relative joint acceleration during a twitch burst
 	constexpr float kTwitchJolt = 4.0f;        // physics units/s limb jerk at the start of a twitch (equal/opposite)
 	constexpr float kTwitchMinScale = 0.25f;   // lightest limb twitches at this fraction of the heaviest

@@ -56,8 +56,26 @@ namespace DynamicRagdollSystem
 					g_linearImpulse(npWorld, s.ref->id.m_value, &liftImpulse);
 					woundImpulse = Sub(woundImpulse, lift);
 				}
+				// A hand behind the trunk pulled straight at the wound drags the arm into the back and sticks there:
+				// first out to its own side past the hips, then round in front of the wound, until it is past the chest.
+				Vec3 target = wound->pos;
+				const DeathSample* shoulder[2]{};  // left, right upper arm
+				for (const auto& s : samples)
+					if (const DeathSample* parent = s.ref->arm && s.ref->side ? find(s.ref->parentId.m_value) : nullptr; parent && !parent->ref->arm)
+						shoulder[s.ref->side == 'R'] = &s;
+				if (const auto [low, high] = TrunkEnds(samples); low && high && low != high && shoulder[0] && shoulder[1]) {
+					const Vec3  up = Unit(Sub(high->pos, low->pos)), right = Unit(Sub(shoulder[1]->pos, shoulder[0]->pos));
+					const Vec3  forward = Unit(Cross(up, right)), out = Scale(right, hand->ref->side == 'R' ? 1.0f : -1.0f);
+					const float behind = -Dot(Sub(hand->pos, high->pos), forward);
+					const float detour = std::clamp((behind - kGripLag) / kGripClear, 0.0f, 1.0f);
+					const float lateral = Dot(Sub(hand->pos, low->pos), out);
+					const float aside = std::clamp((lateral - kGripOut + kGripClear) / kGripClear, 0.0f, 1.0f);  // forward only once past the hips
+					const Vec3  sideways = Add(hand->pos, Scale(out, kGripOut));  // a full kGripOut away: nearer pulls too weakly to free it
+					const Vec3  around = Add(wound->pos, Add(Scale(forward, kGripAround), Scale(out, kGripOut)));
+					target = Add(target, Scale(Sub(Add(sideways, Scale(Sub(around, sideways), aside)), wound->pos), detour));
+				}
 				const auto relVel = Sub(hand->motion.linear, wound->motion.linear);
-				Vec3 deltaV = Scale(Sub(Scale(Sub(wound->pos, hand->pos), kGripKp), Scale(relVel, kGripKd)), dt * a_strength);
+				Vec3 deltaV = Scale(Sub(Scale(Sub(target, hand->pos), kGripKp), Scale(relVel, kGripKd)), dt * a_strength);
 				const float n = Length(deltaV), cap = kGripMaxAccel * dt;
 				if (std::isfinite(n) && n > 1.0e-4f) {
 					if (n > cap) deltaV = Scale(deltaV, cap / n);
