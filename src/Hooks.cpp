@@ -126,6 +126,7 @@ namespace DynamicRagdollSystem
 						REX::INFO("DynamicRagdollSystem: {:08X} dying phase over: {} twitches, {} accepted joint impulses, {} rolls, {} crawl pulls"sv,
 							it->formID, it->twitchCount, it->twitchHits, it->rollCount, it->crawlPulls);
 					}
+					EndDeathWalk(it->formID);
 					it = g_deaths.erase(it);
 					continue;
 				}
@@ -169,6 +170,7 @@ namespace DynamicRagdollSystem
 			g_stumbles.clear();
 			g_pending.clear();
 			g_deaths.clear();
+			ClearDeathWalks();
 			g_knockdowns.clear();
 			g_pendingDeaths.clear();
 			g_lastHit.clear();

@@ -143,6 +143,7 @@ namespace DynamicRagdollSystem
 		std::vector<BodyTarget> targets;
 		// Rolled once per death from the settings chances/ranges.
 		bool                    stumble{ true };
+		bool                    walk{ false };     // wanders on its feet (Walk.cpp) instead of the stumble, then collapses
 		float                   flail{ 0.0f };     // rolled flail strength
 		bool                    kickPending{ false };  // hit knockdown: own push with falloff, applied once the bodies are scanned
 		Vec3                    kickPoint{};       // game units
@@ -227,6 +228,7 @@ namespace DynamicRagdollSystem
 		bool                    dyingLogged{ false };
 		float                   downTime{ 0.0f };    // when the body was first lying (dying clock), 0 = not yet
 		bool                    rollApplied{ false };
+		float                   walkDamage{ 0.0f };  // damage taken during the death walk (ends it at kDeathWalkEndDamage)
 		float                   dyingDamage{ 0.0f }; // damage taken during the dying phase (ends it at kDyingEndDamage)
 		bool                    writheStarted{ false }; // StepWrithe has run once
 		bool                    headOffBefore{ false }; // head already dismembered when StepWrithe started
@@ -355,8 +357,22 @@ namespace DynamicRagdollSystem
 		float max;
 	};
 	inline float kDeathStumbleChance = 0.8f;     // chance a death uses the balance/stepping controller
-	inline float kHeadshotSkipStumbleChance = 0.2f;  // chance a head shot kill drops the stumble it rolled
-	inline float kDeathGripChance = 0.65f;        // chance a hand clutches the body part the killing shot hit
+	inline float kHeadshotSkipStumbleChance = 0.1f;  // chance a head shot kill skips the walk and the stumble (rolled first)
+	inline float kDeathWalkChance = 0.15f;        // chance the dead body wanders on its feet (Walk.cpp) instead of the stumble
+	inline Range kDeathWalkTime{ 4.0f, 12.0f };    // seconds the walk lasts; its strength drains over the later part
+	inline float kDeathWalkPushScale = 0.3f;      // killing-hit push on a walking body, as a fraction of fHitPush/fBodyPush
+	inline float kDeathWalkImpactTime = 0.9f;     // s the walk's support takes to recover from the killing hit ...
+	inline float kDeathWalkImpactSupport = 0.9f;  // ... starting from this fraction of full strength
+	inline float kDeathWalkEndDamage = 80.0f;     // damage while walking that collapses it at once (0 = off)
+	inline float kDeathWalkSpeed = 1.3f;          // units/s at full strength
+	inline float kDeathWalkTurnRate = 2.5f;       // rad/s the trunk turns to face where it is going
+	inline float kDeathWalkWeave = 45.0f;         // degrees the path zigzags either side of the wander direction
+	inline Range kDeathWalkWeaveTime{ 0.9f, 1.8f };  // seconds per zigzag (left and back), new pick each one
+	inline float kDeathWalkLurch = 0.5f;          // speed swings by this fraction, up and down
+	inline float kDeathWalkDrift = 60.0f;         // degrees: largest random change of the wander direction ...
+	inline Range kDeathWalkDriftGap{ 0.8f, 2.0f };  // ... every this many seconds
+	inline float kDeathWalkSharpTurnChance = 0.3f;  // chance a change of direction is a complete random turn instead
+	inline float kDeathGripChance = 0.7f;        // chance a hand clutches the body part the killing shot hit
 	inline float kTwitchChance = 0.65f;          // chance the body twitches and rolls after it falls
 
 	inline Range kDeathStumbleTime{ 2.3f, 2.6f }; // seconds the dead body tries to stay up before collapsing
@@ -916,6 +932,11 @@ namespace DynamicRagdollSystem
 		float a_ground);
 	void StepDeathStumble(Death& a_stumble, RE::Actor* a_actor, float a_now);
 	void StepWrithe(Death& a_death, RE::Actor* a_actor, float a_now);
+	// Walk.cpp: death walk (the active-ragdoll walker), run by StepDeathStumble instead of the stumble while Death::walk.
+	enum class WalkResult { kWalking, kFallen, kUnable };  // kUnable: the skeleton can't walk (falls back to the stumble)
+	WalkResult StepDeathWalk(Death& a_death, RE::Actor* a_actor, RE::hknpBSWorld* a_world, float a_dt, float a_now);
+	void       EndDeathWalk(RE::TESFormID a_formID);
+	void       ClearDeathWalks();
 	void Hook_KillImpl(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent, bool a_ragdollInstant);
 	void StartPendingDeaths(float a_now);
 

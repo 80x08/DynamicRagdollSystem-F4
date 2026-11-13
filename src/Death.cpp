@@ -309,6 +309,68 @@ namespace DynamicRagdollSystem
 	}
 
 
+	// Weapon knockback: guns with a big impact force launch the corpse faster than it can be caught. For a short window,
+	// speed beyond the pre-death movement (sideways, or upward) is cut to fDeathKnockbackScale of the largest seen.
+	// Tracking the peak keeps it from compounding frame to frame. Not for explosions. Updates comVel.
+	void TrimKnockback(Death& a_stumble, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, Vec3& comVel, float a_now)
+	{
+		if (a_now - a_stumble.start >= kKnockWindow || a_stumble.flung || kDeathKnockbackScale >= 1.0f) return;
+		Vec3 extra = Sub(comVel, a_stumble.moveVel);
+		extra.z = std::max(extra.z, 0.0f);  // falling is not knockback
+		const float size = Length(extra);
+		a_stumble.knockPeak = std::max(a_stumble.knockPeak, size);
+		const float allowed = kDeathKnockbackScale * a_stumble.knockPeak;
+		if (size > allowed + 0.05f) {
+			const auto dv = Scale(extra, allowed / size - 1.0f);
+			for (const auto& s : samples) {
+				const auto impulse = Scale(dv, 1.0f / s.motion.inverseMass);
+				RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
+				g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
+			}
+			comVel = Add(comVel, dv);
+			if (!a_stumble.knockLogged) {
+				a_stumble.knockLogged = true;
+				REX::INFO("DynamicRagdollSystem: {:08X} knockback trimmed: extra speed {:.2f} -> {:.2f} (moving {:.2f} before death, weapon '{}', {:.0f} damage)"sv,
+					a_stumble.formID, size, allowed, Length(a_stumble.moveVel), a_stumble.weapon, a_stumble.damage);
+			}
+		}
+	}
+
+	// One-off push from the killing hit, spread like the reaction push (PushSpeed). No push without a recent hit.
+	void ApplyKillingPush(Death& a_stumble, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, Vec3 com, float mass, float a_scale)
+	{
+		if (a_stumble.hitApplied || samples.empty() || mass <= 0.0f) return;
+		a_stumble.hitApplied = true;
+		const bool hitKnown = std::any_of(samples.begin(), samples.end(),
+			[&](const DeathSample& a_s) { return a_s.ref->id.m_value == a_stumble.hitBody; });
+		float lowest = std::numeric_limits<float>::max();
+		for (const auto& s : samples) lowest = std::min(lowest, s.pos.z);
+		Vec3 ownPush{};
+		for (const auto& s : samples) {
+			const float push = PushSpeed(a_stumble, *s.ref, hitKnown, s.pos.z, com.z) * a_scale;
+			if (push <= 0.0f) continue;
+			auto impulse = Scale(a_stumble.hitDir, push / s.motion.inverseMass);
+			if (s.pos.z - lowest < kFloorBodyHeight) impulse.z = std::max(impulse.z, 0.0f);  // floor-level bodies: not into the ground
+			ownPush = Add(ownPush, impulse);
+			RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
+			g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
+		}
+		// Our own push is not weapon knockback: add it to the baseline so the knockback trim leaves it alone.
+		// Not its downward part: the trim ignores falling, and a lowered baseline would read as upward knockback.
+		ownPush.z = std::max(ownPush.z, 0.0f);
+		a_stumble.moveVel = Add(a_stumble.moveVel, Scale(ownPush, 1.0f / mass));
+		// Blast: the same velocity on every body part, away from the blast and upward.
+		if (a_stumble.explosionPush > 0.0f) {
+			const Vec3 blast{ a_stumble.hitDir.x * a_stumble.explosionPush, a_stumble.hitDir.y * a_stumble.explosionPush,
+				kExplosionLift * a_stumble.explosionPush };
+			for (const auto& s : samples) {
+				const auto impulse = Scale(blast, 1.0f / s.motion.inverseMass);
+				RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
+				g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
+			}
+		}
+	}
+
 	void StepDeathStumble(Death& a_stumble, RE::Actor* a_actor, float a_now)
 	{
 		auto* world = GetWorld(a_actor);
@@ -381,6 +443,48 @@ namespace DynamicRagdollSystem
 		}
 		if (a_stumble.targets.empty()) return;
 		UpdateDetached(a_stumble, npWorld); //check for any dismembered limb
+		if (a_stumble.walk && kDeathWalkEndDamage > 0.0f && a_stumble.walkDamage >= kDeathWalkEndDamage) {
+			// Shot enough while walking: the support drops at once; the dying phase follows as after a fall.
+			REX::INFO("DynamicRagdollSystem: {:08X} death walk: {:.0f} damage taken; collapses"sv, a_stumble.formID, a_stumble.walkDamage);
+			EndDeathWalk(a_stumble.formID);
+			a_stumble.walk = false;
+			a_stumble.end = a_now;
+			return;
+		}
+		if (a_stumble.walk) {  // death walk instead of the stumble (Walk.cpp); the hand keeps clutching the wound
+			const float dt = ControlDt(a_stumble.lastStep, a_now);
+			std::vector<DeathSample> samples;
+			Vec3 com{}, comVel{};
+			float mass = 0.0f;
+			for (const auto& body : a_stumble.bodies) {
+				if (!valid(body)) continue;
+				MotionState motion{};
+				if (!ReadMotionState(npWorld, worldBodies[body.index], motion)) continue;
+				samples.push_back({ &body, motion, BodyPosition(worldBodies[body.index]) });
+				com = Add(com, Scale(samples.back().pos, 1.0f / motion.inverseMass));
+				comVel = Add(comVel, Scale(motion.linear, 1.0f / motion.inverseMass));
+				mass += 1.0f / motion.inverseMass;
+			}
+			// The gun's own knockback, cut like the stumble's (head shots launch it otherwise).
+			if (mass > 0.0f) {
+				comVel = Scale(comVel, 1.0f / mass);
+				TrimKnockback(a_stumble, npWorld, samples, comVel, a_now);
+			}
+			// The killing hit's push, while the walk's support is knocked down (Walk.cpp): it visibly staggers first.
+			if (mass > 0.0f) ApplyKillingPush(a_stumble, npWorld, samples, Scale(com, 1.0f / mass), mass, kDeathWalkPushScale);
+			const auto result = StepDeathWalk(a_stumble, a_actor, npWorld, dt, a_now);
+			if (result == WalkResult::kWalking && a_stumble.grip) {
+				ApplyGrip(a_stumble, npWorld, samples, dt, 1.0f);
+			} else if (result == WalkResult::kFallen) {
+				a_stumble.walk = false;
+				a_stumble.end = a_now;  // collapse: the dying phase follows once it lies still
+			} else if (result == WalkResult::kUnable) {
+				a_stumble.walk = false;
+				a_stumble.stumble = true;  // the stumble it would have had instead
+				a_stumble.end = a_now + Random(kDeathStumbleTime.min, kDeathStumbleTime.max);
+			}
+			return;
+		}
 		if (!a_stumble.stumble) { //end if didnt roll stumble
 			a_stumble.end = a_now;  // plain ragdoll fall
 			return;
@@ -448,30 +552,7 @@ namespace DynamicRagdollSystem
 		if (mass > 0.0f && trunkTarget && trunk->priority < 99 && feetMidpoint(feet)) {
 			com = Scale(com, 1.0f / mass);
 			comVel = Scale(comVel, 1.0f / mass);
-			// Weapon knockback: guns with a big impact force launch the corpse faster than it can be caught. For a
-			// short window, speed beyond the pre-death movement (sideways, or upward) is cut to fDeathKnockbackScale
-			// of the largest seen. Tracking the peak keeps it from compounding frame to frame. Not for explosions.
-			if (a_now - a_stumble.start < kKnockWindow && !a_stumble.flung && kDeathKnockbackScale < 1.0f) {
-				Vec3 extra = Sub(comVel, a_stumble.moveVel);
-				extra.z = std::max(extra.z, 0.0f);  // falling is not knockback
-				const float size = Length(extra);
-				a_stumble.knockPeak = std::max(a_stumble.knockPeak, size);
-				const float allowed = kDeathKnockbackScale * a_stumble.knockPeak;
-				if (size > allowed + 0.05f) {
-					const auto dv = Scale(extra, allowed / size - 1.0f);
-					for (const auto& s : samples) {
-						const auto impulse = Scale(dv, 1.0f / s.motion.inverseMass);
-						RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
-						g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
-					}
-					comVel = Add(comVel, dv);
-					if (!a_stumble.knockLogged) {
-						a_stumble.knockLogged = true;
-						REX::INFO("DynamicRagdollSystem: {:08X} knockback trimmed: extra speed {:.2f} -> {:.2f} (moving {:.2f} before death, weapon '{}', {:.0f} damage)"sv,
-							a_stumble.formID, size, allowed, Length(a_stumble.moveVel), a_stumble.weapon, a_stumble.damage);
-					}
-				}
-			}
+			TrimKnockback(a_stumble, npWorld, samples, comVel, a_now);
 			const auto& trunkMotion = std::find_if(samples.begin(), samples.end(),
 				[&](const Sample& a_s) { return a_s.ref == trunk; })->motion;
 			tiltError = RotationError(RotationFrom(worldBodies[trunk->index].m_transform.m_rotation), trunkTarget->rot);
@@ -800,38 +881,7 @@ namespace DynamicRagdollSystem
 				RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
 				g_linearImpulse(npWorld, foot->ref->id.m_value, &nativeImpulse);
 			}
-			// One-off push from the killing hit, spread like the reaction push (PushSpeed). No push without a recent hit.
-			if (!a_stumble.hitApplied) {
-				a_stumble.hitApplied = true;
-				const bool hitKnown = std::any_of(samples.begin(), samples.end(),
-					[&](const Sample& a_s) { return a_s.ref->id.m_value == a_stumble.hitBody; });
-				float lowest = std::numeric_limits<float>::max();
-				for (const auto& s : samples) lowest = std::min(lowest, s.pos.z);
-				Vec3 ownPush{};
-				for (const auto& s : samples) {
-					const float push = PushSpeed(a_stumble, *s.ref, hitKnown, s.pos.z, com.z) * kDeathPushScale;
-					if (push <= 0.0f) continue;
-					auto impulse = Scale(a_stumble.hitDir, push / s.motion.inverseMass);
-					if (s.pos.z - lowest < kFloorBodyHeight) impulse.z = std::max(impulse.z, 0.0f);  // floor-level bodies: not into the ground
-					ownPush = Add(ownPush, impulse);
-					RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
-					g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
-				}
-				// Our own push is not weapon knockback: add it to the baseline so the knockback trim leaves it alone.
-				// Not its downward part: the trim ignores falling, and a lowered baseline would read as upward knockback.
-				ownPush.z = std::max(ownPush.z, 0.0f);
-				a_stumble.moveVel = Add(a_stumble.moveVel, Scale(ownPush, 1.0f / mass));
-				// Blast: the same velocity on every body part, away from the blast and upward.
-				if (a_stumble.explosionPush > 0.0f) {
-					const Vec3 blast{ a_stumble.hitDir.x * a_stumble.explosionPush, a_stumble.hitDir.y * a_stumble.explosionPush,
-						kExplosionLift * a_stumble.explosionPush };
-					for (const auto& s : samples) {
-						const auto impulse = Scale(blast, 1.0f / s.motion.inverseMass);
-						RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
-						g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
-					}
-				}
-			}
+			ApplyKillingPush(a_stumble, npWorld, samples, com, mass, kDeathPushScale);
 		}
 
 		// 3. Grip: a hand clutches the body part the killing shot hit; the free hands brace for the fall.
@@ -1404,7 +1454,7 @@ namespace DynamicRagdollSystem
 		// Stumble, grip, twitches, rolls and crawl are built for humanoid skeletons: everything else keeps the vanilla death.
 		const bool humanoid = npc && IsHumanoid(a_actor);
 		if (npc && !humanoid) LogSkipOnce(a_actor, "death skipped", "not humanoid");
-		const bool tracked = humanoid && (kDeathStumbleChance > 0.0f || kDeathGripChance > 0.0f || kTwitchChance > 0.0f || kCrawlChance > 0.0f);
+		const bool tracked = humanoid && (kDeathWalkChance > 0.0f || kDeathStumbleChance > 0.0f || kDeathGripChance > 0.0f || kTwitchChance > 0.0f || kCrawlChance > 0.0f);
 		// Creatures whose ragdoll fails the joint check keep their death animation: forced into the ragdoll, Nuka-World
 		// ants (134% gap) spun forever. For creatures the check only reads the joints. World lock busy: keep the animation.
 		const auto creatureJointsFit = [&] {
@@ -1456,7 +1506,9 @@ namespace DynamicRagdollSystem
 			const auto pick = [&](const Range& a_range) { return Random(a_range.min, a_range.max); };
 			Death death{};
 			death.formID = formID;
-			death.stumble = Random() < kDeathStumbleChance;
+			// Walk (wanders on its feet) takes over from the stumble; a head shot can still skip both (below, once the hit is known).
+			death.walk = Random() < kDeathWalkChance;
+			death.stumble = !death.walk && Random() < kDeathStumbleChance;
 			death.grip = Random() < kDeathGripChance;
 			const bool moves = Random() < kTwitchChance;
 			// Burned to death (on fire at KillImpl): its own, stronger writhing, whatever the twitch chance rolled.
@@ -1469,8 +1521,8 @@ namespace DynamicRagdollSystem
 				}
 			}
 			death.crawlRolled = !burned && Random() < kCrawlChance && !IsBlacklisted(actor, kCrawlBlacklist);  // burned deaths writhe instead
-			if (!death.stumble && !death.grip && !moves && !burned && !death.crawlRolled) {
-				REX::INFO("DynamicRagdollSystem: {:08X} death: no stumble, grip or twitch rolled; vanilla ragdoll"sv, formID);
+			if (!death.walk && !death.stumble && !death.grip && !moves && !burned && !death.crawlRolled) {
+				REX::INFO("DynamicRagdollSystem: {:08X} death: no walk, stumble, grip or twitch rolled; vanilla ragdoll"sv, formID);
 				continue;
 			}
 			death.support = pick(kDeathSupport);
@@ -1491,9 +1543,9 @@ namespace DynamicRagdollSystem
 			death.flail = pick(kFlailStrength);
 			death.start = a_now;
 			// Without a stumble, StepDeathStumble still runs until the bodies are scanned (it then ends the stumble).
-			death.end = a_now + (death.stumble ? pick(kDeathStumbleTime) : 5.0f);
-			REX::INFO("DynamicRagdollSystem: {:08X} death rolled: stumble {} ({:.2f}s, support {:.2f}, upright {:.2f}, braking {:.2f}) grip {} dying {:.2f}s twitch {:.2f} roll {:.2f} crawl {}"sv,
-				formID, death.stumble, death.end - a_now, death.support, death.upright, death.braking, death.grip, death.dyingTime,
+			death.end = a_now + (death.walk ? pick(kDeathWalkTime) : death.stumble ? pick(kDeathStumbleTime) : 5.0f);
+			REX::INFO("DynamicRagdollSystem: {:08X} death rolled: walk {} stumble {} ({:.2f}s, support {:.2f}, upright {:.2f}, braking {:.2f}) grip {} dying {:.2f}s twitch {:.2f} roll {:.2f} crawl {}"sv,
+				formID, death.walk, death.stumble, death.end - a_now, death.support, death.upright, death.braking, death.grip, death.dyingTime,
 				death.twitch, death.roll, death.crawlRolled);
 			std::scoped_lock lock{ g_mutex };
 			if (const auto it = g_lastHit.find(formID); it != g_lastHit.end() && a_now - it->second.time < kLastHitWindow) {
@@ -1507,15 +1559,18 @@ namespace DynamicRagdollSystem
 				// dismember flag on the hit, so it rules out the crawl by itself.
 				const auto limb = it->second.limb;
 				death.headShotKill = limb == 1 || limb == 2 || limb == 5 || limb == 0x10;
-				if (death.headShotKill && death.stumble && Random() < kHeadshotSkipStumbleChance) {
+				// Rolled first in priority: a skipped head shot neither walks nor stumbles.
+				if (death.headShotKill && (death.walk || death.stumble) && Random() < kHeadshotSkipStumbleChance) {
+					REX::INFO("DynamicRagdollSystem: {:08X} head shot: {} skipped"sv, formID, death.walk ? "walk" : "stumble");
+					death.walk = false;
 					death.stumble = false;
 					death.end = a_now + 5.0f;  // as a death rolled without a stumble
-					REX::INFO("DynamicRagdollSystem: {:08X} head shot: stumble skipped"sv, formID);
 				}
 				// Explosion deaths are flung: no balance help (support/upright/braking), the blast push, and the limbs
 				// flail while airborne. The stumble machinery still runs for the joints, grip and flailing.
 				if (it->second.explosion && Random() >= kExplosionStumbleChance) {
 					if (!death.stumble) death.end = a_now + pick(kDeathStumbleTime);
+					death.walk = false;  // flung bodies don't walk
 					death.stumble = true;
 					death.support = 0.0f;
 					death.upright = 0.0f;
@@ -1528,6 +1583,7 @@ namespace DynamicRagdollSystem
 					// Heavy hits (e.g. a Gauss rifle) blow the body away: same as an explosion but with the weapon's own
 					// knockback kept in full instead of a blast push.
 					if (!death.stumble) death.end = a_now + pick(kDeathStumbleTime);
+					death.walk = false;  // flung bodies don't walk
 					death.stumble = true;
 					death.support = 0.0f;
 					death.upright = 0.0f;

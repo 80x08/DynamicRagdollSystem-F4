@@ -197,9 +197,14 @@ namespace DynamicRagdollSystem
 			// Pellets of the killing burst that land just after the fatal one, before the death is picked up.
 			if (const auto it = g_lastHit.find(a_actor->GetFormID()); it != g_lastHit.end() && now - it->second.burstStart <= kMultiHitWindow)
 				++it->second.burstHits;
-			for (auto& death : g_deaths)
-				if (death.formID == a_actor->GetFormID() && (now >= death.end || (death.burnDown && !death.joints.empty())))
+			for (auto& death : g_deaths) {
+				if (death.formID != a_actor->GetFormID()) continue;
+				// A walking body keeps its own count (kDeathWalkEndDamage), after the killing burst's own pellets.
+				if (death.walk && now < death.end) {
+					if (now - death.start > kMultiHitWindow) death.walkDamage += a_hit->totalDamage;
+				} else if (now >= death.end || (death.burnDown && !death.joints.empty()))
 					death.dyingDamage += a_hit->totalDamage;
+			}
 		}
 		if (a_hit && a_actor && !a_actor->IsPlayerRef()) LogSkipOnce(a_actor, "hit hook", "first hit seen");
 		const bool queued = a_hit && QueueReaction(a_actor, *a_hit);
