@@ -13,7 +13,7 @@ bHumanoidOnly = false
 # NPCs this feature leaves alone. Each entry is a FormID of an NPC (placed reference or base), a race, or a keyword
 # on the NPC or its race. Write "Plugin.esp|0x000800" (FormID inside that plugin, works with any load order) or a
 # full load-order FormID like "0x000B2BF3". Example: ["Fallout4.esm|0x0B2BF3", "DLCCoast.esm|0x01234"].
-sBlacklist = ["Fallout4.esm|0x0B2BF3"]  # ActorTypeTurret: turrets
+sBlacklist = ["Fallout4.esm|0x0B2BF3", "Fallout4.esm|0x0D77E3"]  # ActorTypeTurret: turrets, VertibirdRace: vertibirds
 # Minimum damage of a single hit that triggers a reaction. Range 0-10000.
 fMinDamage = 5.0
 # Hits on the same NPC closer together than this (seconds) are ignored, e.g. shotgun pellets. Range 0-60.
@@ -93,7 +93,7 @@ bKnockdownHumanoidOnly = true
 # true = only hits from the player count (companions and other NPCs shooting do not knock anyone down).
 bKnockdownPlayerOnly = false
 # NPCs never knocked down: by hits, and by flying ragdolls. Same format as [Reaction] sBlacklist.
-sBlacklist = ["Fallout4.esm|0x0B2BF3"]  # ActorTypeTurret: turrets
+sBlacklist = ["Fallout4.esm|0x0B2BF3", "Fallout4.esm|0x0D77E3"]  # ActorTypeTurret: turrets, VertibirdRace: vertibirds
 
 [Burning]
 # true = living humanoid NPCs (humans, ghouls, super mutants) on fire stop attacking, flail their arms and stagger
@@ -152,7 +152,7 @@ fBurnDeathTimeMax = 10.0
 bDisableDeathAnimation = true
 # NPCs that keep the vanilla death (death animation, no stumble, grip, twitching or crawl). Same format as
 # [Reaction] sBlacklist.
-sBlacklist = []
+sBlacklist = ["Fallout4.esm|0x0D77E3"]  # VertibirdRace: vertibirds
 # Chance the dead body tries to stay up for a moment (balance, stepping) before it collapses.
 fDeathStumbleChance = 0.8
 # Chance a head shot kill skips the stumble and collapses at once (checked after fDeathStumbleChance). Range 0-1.
