@@ -298,8 +298,8 @@ fDeathWalkDriftGapMin = 0.8
 fDeathWalkDriftGapMax = 2.0
 # Chance a change of direction is a complete random turn (anywhere up to 180 degrees) instead. Range 0-1.
 fDeathWalkSharpTurnChance = 0.3
-# Damage a walking body takes (summed over hits, after the killing burst) before its support drops and it collapses
-# at once; the dying phase (grip, twitch, roll, crawl) follows as usual. 0 = off. Range 0-10000.
+# Damage a walking body takes (summed over hits, after the killing burst) before the walk ends in a death stumble
+# ([Death] fDeathStumbleTime, starting at the walk's remaining strength); the dying phase (grip, twitch, roll, crawl) follows as usual. 0 = off. Range 0-10000.
 fDeathWalkEndDamage = 80.0
 
 [Crawl]

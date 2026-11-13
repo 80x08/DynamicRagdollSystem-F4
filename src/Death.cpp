@@ -443,12 +443,21 @@ namespace DynamicRagdollSystem
 		}
 		if (a_stumble.targets.empty()) return;
 		UpdateDetached(a_stumble, npWorld); //check for any dismembered limb
-		if (a_stumble.walk && kDeathWalkEndDamage > 0.0f && a_stumble.walkDamage >= kDeathWalkEndDamage) {
-			// Shot enough while walking: the support drops at once; the dying phase follows as after a fall.
-			REX::INFO("DynamicRagdollSystem: {:08X} death walk: {:.0f} damage taken; collapses"sv, a_stumble.formID, a_stumble.walkDamage);
+		// Walk -> stumble: the stumble picks up at the walk's remaining strength (its fade is (end - now) / (end - stumbleStart)).
+		const auto walkToStumble = [&] {
+			const float strength = DeathWalkDrain(a_stumble, a_now);
+			const float time = Random(kDeathStumbleTime.min, kDeathStumbleTime.max);
 			EndDeathWalk(a_stumble.formID);
 			a_stumble.walk = false;
-			a_stumble.end = a_now;
+			a_stumble.stumble = strength > 0.05f;  // a walk already drained out just collapses
+			a_stumble.end = a_stumble.stumble ? a_now + time : a_now;
+			a_stumble.stumbleStart = a_now - time * (1.0f / std::max(strength, 0.05f) - 1.0f);
+		};
+		if (a_stumble.walk && kDeathWalkEndDamage > 0.0f && a_stumble.walkDamage >= kDeathWalkEndDamage) {
+			// Shot enough while walking: it stumbles on the hit, then collapses into the dying phase.
+			REX::INFO("DynamicRagdollSystem: {:08X} death walk: {:.0f} damage taken; stumbles (strength {:.2f})"sv, a_stumble.formID,
+				a_stumble.walkDamage, DeathWalkDrain(a_stumble, a_now));
+			walkToStumble();
 			return;
 		}
 		if (a_stumble.walk) {  // death walk instead of the stumble (Walk.cpp); the hand keeps clutching the wound
@@ -479,9 +488,7 @@ namespace DynamicRagdollSystem
 				a_stumble.walk = false;
 				a_stumble.end = a_now;  // collapse: the dying phase follows once it lies still
 			} else if (result == WalkResult::kUnable) {
-				a_stumble.walk = false;
-				a_stumble.stumble = true;  // the stumble it would have had instead
-				a_stumble.end = a_now + Random(kDeathStumbleTime.min, kDeathStumbleTime.max);
+				walkToStumble();  // the stumble it would have had instead
 			}
 			return;
 		}
@@ -499,7 +506,8 @@ namespace DynamicRagdollSystem
 		const float dt = ControlDt(a_stumble.lastStep, a_now);
 		// Strength decays steadily from the moment of death, so the body buckles progressively instead of
 		// standing at full strength and dropping at the end.
-		const float fade = std::clamp((a_stumble.end - a_now) / std::max(a_stumble.end - a_stumble.start, 0.01f), 0.0f, 1.0f);
+		const float fadeFrom = a_stumble.stumbleStart != 0.0f ? a_stumble.stumbleStart : a_stumble.start;
+		const float fade = std::clamp((a_stumble.end - a_now) / std::max(a_stumble.end - fadeFrom, 0.01f), 0.0f, 1.0f);
 		if (fade <= 0.0f) return;
 
 		// 1. Whole-rig balance. Every body gets the velocity change of one rigid body, so the

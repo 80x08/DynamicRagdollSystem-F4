@@ -477,9 +477,7 @@ namespace DynamicRagdollSystem
 		}
 
 		// Strength: full for the first part of the walk, then it drains to nothing; the trunk softens, sags and slows.
-		const float span = std::max(a_death.end - a_death.start, 0.01f);
-		const float progress = std::clamp((a_now - a_death.start) / span, 0.0f, 1.0f);
-		const float drain = 1.0f - Smooth((progress - kWalkHold) / (1.0f - kWalkHold));
+		const float drain = DeathWalkDrain(a_death, a_now);
 		// Killing hit: the support starts knocked down and recovers, so the push shows before the walk catches it.
 		const float impact = kDeathWalkImpactTime > 0.0f ? Smooth((a_now - a_death.start) / kDeathWalkImpactTime) : 1.0f;
 		const float strength = drain * (kDeathWalkImpactSupport + (1.0f - kDeathWalkImpactSupport) * impact);
@@ -506,6 +504,13 @@ namespace DynamicRagdollSystem
 		s.moveVel = Scale(Vec3{ std::sin(dir), std::cos(dir), 0.0f }, kDeathWalkSpeed * drain * lurch);
 		Walk(c);
 		return WalkResult::kWalking;
+	}
+
+	float DeathWalkDrain(const Death& a_death, float a_now)
+	{
+		const float span = std::max(a_death.end - a_death.start, 0.01f);
+		const float progress = std::clamp((a_now - a_death.start) / span, 0.0f, 1.0f);
+		return 1.0f - Smooth((progress - kWalkHold) / (1.0f - kWalkHold));
 	}
 
 	void EndDeathWalk(RE::TESFormID a_formID) { g_walkers.erase(a_formID); }

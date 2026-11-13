@@ -229,6 +229,7 @@ namespace DynamicRagdollSystem
 		float                   downTime{ 0.0f };    // when the body was first lying (dying clock), 0 = not yet
 		bool                    rollApplied{ false };
 		float                   walkDamage{ 0.0f };  // damage taken during the death walk (ends it at kDeathWalkEndDamage)
+		float                   stumbleStart{ 0.0f }; // stumble after a death walk: its strength fades from here (0 = from start)
 		float                   dyingDamage{ 0.0f }; // damage taken during the dying phase (ends it at kDyingEndDamage)
 		bool                    writheStarted{ false }; // StepWrithe has run once
 		bool                    headOffBefore{ false }; // head already dismembered when StepWrithe started
@@ -935,6 +936,7 @@ namespace DynamicRagdollSystem
 	// Walk.cpp: death walk (the active-ragdoll walker), run by StepDeathStumble instead of the stumble while Death::walk.
 	enum class WalkResult { kWalking, kFallen, kUnable };  // kUnable: the skeleton can't walk (falls back to the stumble)
 	WalkResult StepDeathWalk(Death& a_death, RE::Actor* a_actor, RE::hknpBSWorld* a_world, float a_dt, float a_now);
+	float      DeathWalkDrain(const Death& a_death, float a_now);  // 1 = full strength, drains to 0 over the walk
 	void       EndDeathWalk(RE::TESFormID a_formID);
 	void       ClearDeathWalks();
 	void Hook_KillImpl(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent, bool a_ragdollInstant);
