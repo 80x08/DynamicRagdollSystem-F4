@@ -198,8 +198,11 @@ namespace DynamicRagdollSystem
 		bool                    hitApplied{ false };
 		std::uint32_t           stepFoot{ 0 };  // body id of the swinging foot, 0 when not stepping
 		char                    stepSide{ 0 };
-		char                    lastStepSide{ 0 };  // feet alternate: the next step uses the other foot
 		float                   stepTime{ 0.3f };   // this step's duration (shorter when moving fast)
+		Vec3                    staggerLine{};      // flat direction the body staggers along, fixed the frame after the hit (0 = not yet)
+		Vec3                    staggerFrom{};      // a point on that line (the feet then)
+		std::vector<std::pair<std::uint32_t, Vec3>> stanceOffsets;  // foot body id -> flat place relative to the feet's centre
+		std::uint32_t           swingAtDeath{ 0 };  // foot body id mid-swing at death (walking), takes the first step; 0 = none
 		Vec3                    stepFrom{};
 		Vec3                    stepTo{};
 		float                   stepStart{ 0.0f };
@@ -459,8 +462,17 @@ namespace DynamicRagdollSystem
 	constexpr float kStepTime = 0.3f;
 	constexpr float kStepHeight = 0.2f;
 	constexpr float kStepMaxLength = 0.45f;
-	constexpr float kStepMinLength = 0.2f;      // shorter steps were hard to see
+	// Stagger and step placement (tuned in RagdollLab's sim, physics units).
+	constexpr float kStepOvershoot = 0.1f;      // a step lands this far past the capture point along the stagger line
+	constexpr float kStaggerSpeed = 1.0f;       // units/s the body is carried along the stagger line (fades with strength)
+	constexpr float kLiftedFoot = 0.08f;        // a foot this far above its ground is up: it steps down at once, takes no reaction
+	constexpr float kSwingingFoot = 1.0f;       // units/s faster than the other foot, flat, at death: that foot is mid-swing
+	constexpr float kStepReach = 0.45f;         // a step lands at most this far from its hip, flat (beyond, the leg goes straight)
+	constexpr float kFootGap = 0.15f;           // a step lands at least this far to its own side of the other foot
+	constexpr float kStanceMax = 0.15f;         // a foot keeps at most this offset from the feet's centre (a stride is narrowed)
 	constexpr float kSwingKneeBend = 50.0f;     // extra degrees the stepping knee folds mid-swing
+	constexpr float kSwingKneeStiffness = 4.0f; // stepping (or hanging) knee servo, times the standing knee's
+	constexpr float kHangingKneeBend = 60.0f;   // degrees a knee folds to while its foot is up and not stepping
 	constexpr float kKneeMinStiffness = 1.0f;   // knees bend with at least this stiffness, even if fDeathStiffness is low
 	constexpr float kKneeMinFade = 0.4f;        // knee drive never fades below this during the stumble
 	constexpr float kStepCooldown = 0.12f;
@@ -505,6 +517,7 @@ namespace DynamicRagdollSystem
 	// wound (out is also how far from the pelvis's centre it swings before turning forward), over which each part of the
 	// detour ramps in, and behind the chest's centre before it starts (a hand lagging a moment behind goes straight).
 	constexpr float kGripAround = 0.3f, kGripOut = 0.35f, kGripClear = 0.1f, kGripLag = 0.05f;
+	constexpr float kGripUpperArmCarry = 0.3f; // share of the upper arm's weight the grip carries while the hand is above the wound
 	constexpr float kTwitchAccel = 500.0f;     // rad/s^2 relative joint acceleration during a twitch burst
 	constexpr float kTwitchJolt = 4.0f;        // physics units/s limb jerk at the start of a twitch (equal/opposite)
 	constexpr float kTwitchMinScale = 0.25f;   // lightest limb twitches at this fraction of the heaviest

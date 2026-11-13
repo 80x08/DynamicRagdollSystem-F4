@@ -51,7 +51,12 @@ namespace DynamicRagdollSystem
 					if (!s.ref->arm || s.ref->side != hand->ref->side) continue;
 					const float m = 1.0f / s.motion.inverseMass;
 					armMass += m;
-					const auto lift = Scale(Vec3{ g.x, g.y, g.z }, -m * dt * a_strength);
+					// A hand above the wound: the upper arm only partly carried, so the elbow drops. Fully carried, a raised
+					// arm (aiming at death) kept its elbow at shoulder height and the hand stuck under the chin. Below the
+					// wound (coming up from behind the back to the head) the whole arm is carried, or it can't lift.
+					const DeathSample* parent = find(s.ref->parentId.m_value);
+					const bool dropElbow = parent && !parent->ref->arm && hand->pos.z > wound->pos.z;
+					const auto lift = Scale(Vec3{ g.x, g.y, g.z }, -m * dt * a_strength * (dropElbow ? kGripUpperArmCarry : 1.0f));
 					RE::hkVector4f liftImpulse{ lift.x, lift.y, lift.z, 0.0f };
 					g_linearImpulse(npWorld, s.ref->id.m_value, &liftImpulse);
 					woundImpulse = Sub(woundImpulse, lift);
@@ -351,6 +356,26 @@ namespace DynamicRagdollSystem
 				a_stumble.targets.push_back({ body.id.m_value, RotationFrom(b.m_transform.m_rotation), BodyPosition(b) });
 			}
 			a_stumble.hasFeet = feetMidpoint(a_stumble.feetCaptured); //averages the positions of the valid foot bodies
+			// Feet: height of the lower foot (dying mid-stride one is in the air: the average put the ground ~5 cm up, so
+			// that foot never counted as lifted); each foot's flat place relative to the feet's centre, capped so a stride
+			// isn't kept; and the foot mid-swing at death (clearly faster than the other), which takes the first step.
+			float footSpeed[2]{};
+			std::uint32_t footId[2]{};
+			int footCount = 0;
+			for (const auto& body : a_stumble.bodies) {
+				if (!body.foot || !valid(body) || footCount >= 2) continue;
+				const auto& b = worldBodies[body.index];
+				const Vec3 pos = BodyPosition(b);
+				a_stumble.feetCaptured.z = std::min(a_stumble.feetCaptured.z, pos.z);
+				Vec3 offset{ pos.x - a_stumble.feetCaptured.x, pos.y - a_stumble.feetCaptured.y, 0.0f };
+				if (const float n = Length(offset); n > kStanceMax) offset = Scale(offset, kStanceMax / n);
+				a_stumble.stanceOffsets.push_back({ body.id.m_value, offset });
+				MotionState motion{};
+				if (ReadMotionState(npWorld, b, motion)) footSpeed[footCount] = std::sqrt(motion.linear.x * motion.linear.x + motion.linear.y * motion.linear.y);
+				footId[footCount++] = body.id.m_value;
+			}
+			if (footCount == 2 && std::abs(footSpeed[0] - footSpeed[1]) > kSwingingFoot)
+				a_stumble.swingAtDeath = footId[footSpeed[0] > footSpeed[1] ? 0 : 1];
 			REX::INFO("DynamicRagdollSystem: {:08X} death pose captured after {:.2f}s ({} bodies, feet {}, gravity z {:.2f})"sv, a_stumble.formID,
 				a_now - a_stumble.start, a_stumble.targets.size(), a_stumble.hasFeet, npWorld->m_gravity.z);
 		}
@@ -504,61 +529,108 @@ namespace DynamicRagdollSystem
 			// Support (gravity cancel + height spring) only while the feet are on the ground; airborne, gravity acts.
 			const float support = grounded ?
 				(kHeightKp * (capturedComZ + (feetLevel - rest) - sink - com.z) - kHeightKd * comVel.z - g.z * a_stumble.support) * dt * fade * catchable : 0.0f;
-			const Vec3 dCom{ -a_stumble.braking * comVel.x * dt * catchable, -a_stumble.braking * comVel.y * dt * catchable,
+			// Horizontal: braked toward a stagger along the stagger line instead of to a standstill, which stopped the
+			// body within a step and left the feet shuffling on the spot. It fades with strength.
+			const Vec3 staggerDir = Length(a_stumble.staggerLine) > 0.5f ? a_stumble.staggerLine : Unit(Vec3{ a_stumble.hitDir.x, a_stumble.hitDir.y, 0.0f });
+			const Vec3 stagger = Scale(staggerDir, kStaggerSpeed * fade);
+			const Vec3 dCom{ -a_stumble.braking * (comVel.x - stagger.x) * dt * catchable, -a_stumble.braking * (comVel.y - stagger.y) * dt * catchable,
 				grounded ? support : std::min(0.0f, -kHeightKd * comVel.z * dt) };  // airborne: brake the launch only
-			// Stepping: when the capture point (where the COM will come to rest) leaves the feet,
-			// swing the farther foot under it.
-			if (grounded && !a_stumble.stepFoot && a_now >= a_stumble.nextStep && fade > 0.3f && catchable > 0.3f) {
+			// The stagger line: the way the body moves just after the hit (its push plus whatever it was doing, e.g.
+			// walking), fixed for the whole stumble. Steps aimed wherever the pelvis drifted walked it round in circles.
+			if (Length(a_stumble.staggerLine) < 0.5f && a_stumble.hitApplied) {
+				a_stumble.staggerLine = Unit(Vec3{ comVel.x, comVel.y, 0.0f });
+				if (Length(a_stumble.staggerLine) < 0.5f) a_stumble.staggerLine = Unit(Vec3{ a_stumble.hitDir.x, a_stumble.hitDir.y, 0.0f });
+				if (Length(a_stumble.staggerLine) < 0.5f) a_stumble.staggerLine = Vec3{ 0.0f, 1.0f, 0.0f };
+				a_stumble.staggerFrom = Vec3{ feet.x, feet.y, 0.0f };
+			}
+			const auto flat = [](Vec3 a_v) { return Vec3{ a_v.x, a_v.y, 0.0f }; };
+			const auto findSample = [&](std::uint32_t a_id) -> const Sample* {
+				for (const auto& s : samples)
+					if (s.ref->id.m_value == a_id) return &s;
+				return nullptr;
+			};
+			// Leg bodies above a foot: calf (knee) and thigh (hip). Body origins sit on the joints.
+			const auto legOf = [&](const Sample& a_foot, const Sample*& a_calf, const Sample*& a_thigh) {
+				a_calf = findSample(a_foot.ref->parentId.m_value);
+				a_thigh = a_calf ? findSample(a_calf->ref->parentId.m_value) : nullptr;
+				return a_calf && a_thigh;
+			};
+			Vec3 hips{};  // flat, left to right across the thighs
+			for (const auto& s : samples)
+				if (s.ref->leg && !s.ref->knee && !s.ref->foot && s.ref->side) hips = Add(hips, Scale(s.pos, s.ref->side == 'R' ? 1.0f : -1.0f));
+			hips = Unit(flat(hips));
+			const auto ownSide = [&](const BodyRef& a_ref) { return Scale(hips, a_ref.side == 'R' ? 1.0f : -1.0f); };
+			// Stepping: when the capture point (where the COM will come to rest) passes the feet along the stagger line,
+			// swing a foot to it. A foot that must step (see `up`) steps at once.
+			if (grounded && !a_stumble.stepFoot && fade > 0.3f && catchable > 0.3f && Length(a_stumble.staggerLine) > 0.5f) {
 				const Sample* footSamples[2]{};
 				int footCount = 0;
 				for (const auto& s : samples)
 					if (s.ref->foot && footCount < 2) footSamples[footCount++] = &s;
 				if (footCount == 2) {
+					const Vec3& line = a_stumble.staggerLine;
 					const float look = std::sqrt(std::max(com.z - feet.z, 0.3f) / std::max(-g.z, 1.0f));
-					const Vec3 capture{ com.x + comVel.x * look, com.y + comVel.y * look, 0.0f };
-					// Distance from the capture point to the segment between the feet (the support area).
-					// Measuring from the midpoint kept triggering after every step, since a landed step
-					// only moves the midpoint halfway.
-					const Vec3 a{ footSamples[0]->pos.x, footSamples[0]->pos.y, 0.0f };
-					const Vec3 b{ footSamples[1]->pos.x, footSamples[1]->pos.y, 0.0f };
-					const auto ab = Sub(b, a);
-					const float abLen2 = Dot(ab, ab);
-					const float t = abLen2 > 1.0e-6f ? std::clamp(Dot(Sub(capture, a), ab) / abLen2, 0.0f, 1.0f) : 0.5f;
-					const auto offset = Sub(capture, Add(a, Scale(ab, t)));
-					if (Length(offset) > kStepTrigger) {
-						const auto flatDist = [&](const Sample* a_s) {
-							return Length(Vec3{ a_s->pos.x - capture.x, a_s->pos.y - capture.y, 0.0f });
+					// Carried by the pelvis's velocity, not the COM's: a shot to the upper body bends it at the hips first,
+					// and stepping for that sent a foot out where the hips never followed (a stiff, stretched leg that then
+					// shuffled back). Only the motion along the line counts; sideways drift is braked.
+					const float at = Dot(Sub(flat(com), a_stumble.staggerFrom), line) + Dot(trunkMotion.linear, line) * look;
+					const Vec3 capture = Add(a_stumble.staggerFrom, Scale(line, at));
+					const float a0 = Dot(Sub(flat(footSamples[0]->pos), a_stumble.staggerFrom), line);
+					const float a1 = Dot(Sub(flat(footSamples[1]->pos), a_stumble.staggerFrom), line);
+					const float beyond = std::max(at - std::max(a0, a1), std::min(a0, a1) - at);  // > 0: past the feet
+					// Must step next: up in the air; dying mid-stride, out of its hip's reach (it can't hold the body up:
+					// the body sank onto it in a split and pinned the leg straight); or, for the first step, the foot
+					// mid-swing at death (only a few cm up: it flew on forward as a straight kick while the other stepped).
+					const auto up = [&](const Sample* a_s) {
+						const Sample* calf = nullptr;
+						const Sample* thigh = nullptr;
+						const bool stranded = a_stumble.swingAtDeath && legOf(*a_s, calf, thigh) && Length(flat(Sub(a_s->pos, thigh->pos))) > kStepReach;
+						return a_s->pos.z - footLevel(a_s->ref->id.m_value) > kLiftedFoot || stranded ||
+						       (a_stumble.steps == 0 && a_s->ref->id.m_value == a_stumble.swingAtDeath);
+					};
+					const bool lifted[2]{ up(footSamples[0]), up(footSamples[1]) };
+					if (lifted[0] != lifted[1] || (a_now >= a_stumble.nextStep && beyond > kStepTrigger)) {
+						// Each foot keeps its standing place relative to the line and lands kStepOvershoot past the capture point.
+						const Vec3 dir = Scale(line, at >= 0.5f * (a0 + a1) ? 1.0f : -1.0f);
+						const float maxStep = std::min(kStepMaxLength * (1.0f + 0.25f * speed), 2.0f * kStepMaxLength);  // faster: longer strides
+						const auto land = [&](int a_i) {
+							const Sample* s = footSamples[a_i];
+							Vec3 offset{};
+							for (const auto& [id, o] : a_stumble.stanceOffsets)
+								if (id == s->ref->id.m_value) offset = o;
+							Vec3 step = flat(Sub(Add(Add(capture, Scale(dir, kStepOvershoot)), offset), s->pos));
+							if (const float n = Length(step); n > maxStep) step = Scale(step, maxStep / n);
+							Vec3 to = Add(s->pos, step);
+							// Never out of the leg's reach: a spot the foot can't get to from the hip (a leg the hit kicked far
+							// out) left the leg pointing at it, straight and hanging in the air.
+							const Sample* calf = nullptr;
+							const Sample* thigh = nullptr;
+							if (legOf(*s, calf, thigh)) {
+								const Vec3 hip = flat(thigh->pos), out = Sub(flat(to), hip);
+								if (const float n = Length(out); n > kStepReach) to = Add(hip, Scale(out, kStepReach / n));
+							}
+							// Stay on its own side of the other foot, across the hips as they are now, or it tangles in that leg.
+							const Vec3 own = ownSide(*s->ref);
+							if (const float gap = Dot(flat(Sub(to, footSamples[1 - a_i]->pos)), own); gap < kFootGap) to = Add(to, Scale(own, kFootGap - gap));
+							to.z = footLevel(s->ref->id.m_value);  // a lifted foot comes down
+							return to;
 						};
-						// Alternate feet like real stumbling; only the first step picks the foot farther from the
-						// capture point (always picking the farther one stepped the same foot again and again).
-						bool firstSwings = flatDist(footSamples[0]) > flatDist(footSamples[1]);
-						if (a_stumble.lastStepSide && footSamples[0]->ref->side != footSamples[1]->ref->side) {
-							firstSwings = footSamples[0]->ref->side != a_stumble.lastStepSide;
-						}
-						const Sample* swing = footSamples[firstSwings ? 0 : 1];
-						const Sample* stance = footSamples[firstSwings ? 1 : 0];
-						// Land under the capture point but keep half the stance width sideways.
-						const auto dir = Unit(offset);
-						Vec3 width = Sub(swing->pos, stance->pos);
-						width.z = 0.0f;
-						width = Sub(width, Scale(dir, Dot(width, dir)));
-						Vec3 step = Sub(Add(capture, Scale(width, 0.5f)), swing->pos);
-						step.z = 0.0f;
-						// Faster bodies take longer strides so the feet keep up instead of the body sliding past them.
-						const float maxStep = std::min(kStepMaxLength * (1.0f + 0.25f * speed), 2.0f * kStepMaxLength);
-						if (const float n = Length(step); n > maxStep) step = Scale(step, maxStep / n);
-						else if (n > 1.0e-3f && n < kStepMinLength) step = Scale(step, kStepMinLength / n);
+						// The foot that can actually move farther steps (a lifted one always). Judged after the limits above:
+						// on a sideways push the trailing foot is farthest from its spot but blocked by the other foot, and
+						// choosing it sent it again and again behind the other leg. Now the leading foot goes out first.
+						const auto need = [&](int a_i) { return Length(flat(Sub(land(a_i), footSamples[a_i]->pos))) + (lifted[a_i] ? 9.0f : 0.0f); };
+						const int pick = need(0) > need(1) ? 0 : 1;
+						const Sample* swing = footSamples[pick];
 						a_stumble.stepFoot = swing->ref->id.m_value;
 						a_stumble.stepSide = swing->ref->side;
 						a_stumble.stepFrom = swing->pos;
-						a_stumble.stepTo = Add(swing->pos, step);
+						a_stumble.stepTo = land(pick);
 						a_stumble.stepStart = a_now;
 						a_stumble.stepGroundTried = false;  // landing ray next frame (UpdateGround)
 						a_stumble.stepGroundHit = false;
-						a_stumble.lastStepSide = swing->ref->side;
 						a_stumble.stepTime = kStepTime / (1.0f + 0.3f * speed);  // quicker steps when moving fast
-						REX::INFO("DynamicRagdollSystem: {:08X} death step {} with {} foot, length {:.2f}"sv, a_stumble.formID,
-							++a_stumble.steps, swing->ref->side ? swing->ref->side : '?', Length(step));
+						REX::INFO("DynamicRagdollSystem: {:08X} death step {} with {} foot, length {:.2f}{}"sv, a_stumble.formID, ++a_stumble.steps,
+							swing->ref->side ? swing->ref->side : '?', Length(flat(Sub(a_stumble.stepTo, swing->pos))), lifted[pick] ? " (foot up)" : "");
 					}
 				}
 			}
@@ -576,37 +648,69 @@ namespace DynamicRagdollSystem
 					const auto& from = a_stumble.stepFrom;
 					const auto& to = a_stumble.stepTo;
 					// Land at standing height on the ground under the target (as footLevel), so stairs and slopes are
-					// stepped onto. No hit, or a change too big to be a step: the start height, as before.
-					float toZ = from.z;
+					// stepped onto. No hit, or a change too big to be a step: the foot's own ground level.
+					float toZ = to.z;
 					if (rays && a_stumble.stepGroundHit) {
 						const float level = rest + a_stumble.stepGround - a_stumble.groundAtDeath;
-						if (std::abs(level - from.z) < kStepMaxRise) toZ = level;
+						if (std::abs(level - to.z) < kStepMaxRise) toZ = level;
 					}
-					const Vec3 desiredPos{ from.x + (to.x - from.x) * phase, from.y + (to.y - from.y) * phase,
+					// The foot swings in under the hip on its way (a curve through the hip's current spot), like a real step.
+					// A straight line from a trailing foot lifted it while the leg was still stretched out behind: a stiff leg.
+					const Sample* calf = nullptr;
+					const Sample* thigh = nullptr;
+					const bool leg = legOf(*swing, calf, thigh);
+					const Vec3 under = leg ? Vec3{ thigh->pos.x, thigh->pos.y, from.z } : Scale(Add(from, to), 0.5f);
+					const float u0 = (1.0f - phase) * (1.0f - phase), u1 = 2.0f * phase * (1.0f - phase), u2 = phase * phase;
+					Vec3 desiredPos{ from.x * u0 + under.x * u1 + to.x * u2, from.y * u0 + under.y * u1 + to.y * u2,
 						from.z + (toZ - from.z) * phase + kStepHeight * std::sin(3.14159265f * phase) };
-					const Vec3 feedForward{ (to.x - from.x) / a_stumble.stepTime, (to.y - from.y) / a_stumble.stepTime,
-						(toZ - from.z) / a_stumble.stepTime };
-					const auto desiredV = Add(feedForward, Scale(Sub(desiredPos, swing->pos), kSwingKp));
-					Vec3 deltaV = Sub(desiredV, swing->motion.linear);
-					const float n = Length(deltaV), cap = kSwingMaxAccel * dt;
-					if (std::isfinite(n) && n > 1.0e-4f) {
+					// The way there stays on its own side of the planted foot too (swinging behind it tangled the legs).
+					for (const auto& s : samples)
+						if (s.ref->foot && s.ref->id.m_value != a_stumble.stepFoot) {
+							const Vec3 own = ownSide(*swing->ref);
+							if (const float gap = Dot(flat(Sub(desiredPos, s.pos)), own); gap < kFootGap) desiredPos = Add(desiredPos, Scale(own, kFootGap - gap));
+						}
+					const Vec3 pathV{ (2.0f * (1.0f - phase) * (under.x - from.x) + 2.0f * phase * (to.x - under.x)) / a_stumble.stepTime,
+						(2.0f * (1.0f - phase) * (under.y - from.y) + 2.0f * phase * (to.y - under.y)) / a_stumble.stepTime, (toZ - from.z) / a_stumble.stepTime };
+					// The knee goes where two-bone IK puts it for that ankle point, bent toward the body's front. Driving the
+					// foot alone lifted it by swinging the whole straight leg from the hip (a stiff goose step).
+					std::vector<std::pair<const Sample*, Vec3>> drive{ { &*swing, desiredPos } };
+					const auto* thighTarget = leg ? findTarget(thigh->ref->id.m_value) : nullptr;
+					const auto* calfTarget = leg ? findTarget(calf->ref->id.m_value) : nullptr;
+					const auto* footTarget = findTarget(swing->ref->id.m_value);
+					if (thighTarget && calfTarget && footTarget) {
+						const float upper = Length(Sub(calfTarget->pos, thighTarget->pos)), lower = Length(Sub(footTarget->pos, calfTarget->pos));
+						Vec3 reach = Sub(desiredPos, thigh->pos);
+						if (const float n = Length(reach); n > 0.999f * (upper + lower)) reach = Scale(reach, 0.999f * (upper + lower) / n);
+						const float d = std::max(Length(reach), 1.0e-3f);
+						const Vec3 u = Scale(reach, 1.0f / d), front = Cross(Vec3{ 0.0f, 0.0f, 1.0f }, hips);
+						Vec3 bendTo = Unit(Sub(front, Scale(u, Dot(front, u))));
+						if (Length(bendTo) < 0.5f) bendTo = front;
+						const float along = (upper * upper - lower * lower + d * d) / (2.0f * d);
+						drive.push_back({ calf, Add(thigh->pos, Add(Scale(u, along), Scale(bendTo, std::sqrt(std::max(0.0f, upper * upper - along * along))))) });
+					}
+					Vec3 legImpulse{};
+					for (const auto& [s, target] : drive) {
+						Vec3 deltaV = Sub(Add(pathV, Scale(Sub(target, s->pos), kSwingKp)), s->motion.linear);
+						const float n = Length(deltaV), cap = kSwingMaxAccel * dt;
+						if (!std::isfinite(n) || n < 1.0e-4f) continue;
 						if (n > cap) deltaV = Scale(deltaV, cap / n);
-						const auto impulse = Scale(deltaV, 1.0f / swing->motion.inverseMass);
+						const auto impulse = Scale(deltaV, 1.0f / s->motion.inverseMass);
 						RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
-						g_linearImpulse(npWorld, a_stumble.stepFoot, &nativeImpulse);
-						// Hip-muscle reaction on the trunk: an unreacted swing push added momentum toward the capture
-						// point every step, so the body sped up (longer steps, more push) and slid past its planted leg.
-						float trunkMass = 0.0f;
-						for (const auto& s : samples)
-							if (s.ref->pelvis || s.ref->spine) trunkMass += 1.0f / s.motion.inverseMass;
-						if (trunkMass > 0.0f) {
-							const auto backV = Scale(impulse, -1.0f / trunkMass);  // same velocity change on each trunk body
-							for (const auto& s : samples) {
-								if (!s.ref->pelvis && !s.ref->spine) continue;
-								const auto back = Scale(backV, 1.0f / s.motion.inverseMass);
-								RE::hkVector4f nativeBack{ back.x, back.y, back.z, 0.0f };
-								g_linearImpulse(npWorld, s.ref->id.m_value, &nativeBack);
-							}
+						g_linearImpulse(npWorld, s->ref->id.m_value, &nativeImpulse);
+						legImpulse = Add(legImpulse, impulse);
+					}
+					// Hip-muscle reaction on the trunk: an unreacted swing push added momentum toward the capture
+					// point every step, so the body sped up (longer steps, more push) and slid past its planted leg.
+					float trunkMass = 0.0f;
+					for (const auto& s : samples)
+						if (s.ref->pelvis || s.ref->spine) trunkMass += 1.0f / s.motion.inverseMass;
+					if (trunkMass > 0.0f) {
+						const auto backV = Scale(legImpulse, -1.0f / trunkMass);  // same velocity change on each trunk body
+						for (const auto& s : samples) {
+							if (!s.ref->pelvis && !s.ref->spine) continue;
+							const auto back = Scale(backV, 1.0f / s.motion.inverseMass);
+							RE::hkVector4f nativeBack{ back.x, back.y, back.z, 0.0f };
+							g_linearImpulse(npWorld, s.ref->id.m_value, &nativeBack);
 						}
 					}
 				}
@@ -614,10 +718,12 @@ namespace DynamicRagdollSystem
 
 			// All help acts through the planted feet: the opposite impulse goes into the stance feet, where the ground
 			// takes it (like a leg pushing). No planted foot = no help, and sideways help is limited by foot friction,
-			// so the body cannot hover or be held up against its momentum by an invisible hand.
+			// so the body cannot hover or be held up against its momentum by an invisible hand. Only a foot really down
+			// takes it: one already lifted carries no weight, so the push slid it out and straightened the leg.
 			std::vector<const Sample*> stance;
 			for (const auto& s : samples)
-				if (s.ref->foot && s.ref->id.m_value != a_stumble.stepFoot && std::abs(s.pos.z - footLevel(s.ref->id.m_value)) < kGroundTolerance)
+				if (s.ref->foot && s.ref->id.m_value != a_stumble.stepFoot && s.pos.z - footLevel(s.ref->id.m_value) < kLiftedFoot &&
+				    footLevel(s.ref->id.m_value) - s.pos.z < kGroundTolerance)
 					stance.push_back(&s);
 			// A body cannot hold itself up with its weight hanging past its feet (e.g. over a ledge): fade all help
 			// by the horizontal distance from the COM to the planted feet (segment between them, or the one foot).
@@ -789,6 +895,12 @@ namespace DynamicRagdollSystem
 			const auto parentRotation = RotationFrom(parent.m_transform.m_rotation);
 			const auto currentRelative = RelativeRotation(parentRotation, RotationFrom(child.m_transform.m_rotation));
 			auto targetRelative = RelativeRotation(parentTarget->rot, childTarget->rot);
+			// A knee whose foot is off the ground (and not stepping) carries no weight: it folds loose. Held at the death
+			// pose it stayed locked straight and stuck out while the body rolled off it.
+			bool hanging = false;
+			if (joint.knee && !swingLeg)
+				for (const auto& s : samples)
+					if (s.ref->foot && s.ref->parentId.m_value == joint.id.m_value) hanging = s.pos.z - footLevel(s.ref->id.m_value) > kLiftedFoot;
 			if (joint.knee) {
 				// Knees fold progressively as the body weakens, instead of holding the death pose (which left a
 				// leg that was reaching forward mid-stride stretched out).
@@ -800,14 +912,17 @@ namespace DynamicRagdollSystem
 						const float phase = std::clamp((a_now - a_stumble.stepStart) / std::max(a_stumble.stepTime, 0.01f), 0.0f, 1.0f);
 						bend += kSwingKneeBend * std::sin(3.14159265f * phase);
 					}
+					if (hanging) bend = std::max(bend, kHangingKneeBend);
 					targetRelative = Multiply(AxisAngle(axis, bend * 0.0174533f), targetRelative);
 				}
 			}
 			const auto errorWorld = Rotate(parentRotation, RotationError(currentRelative, targetRelative));
 			const auto relativeOmega = Sub(Rotate(childMotion.orientation, childMotion.angular),
 				Rotate(parentMotion.orientation, parentMotion.angular));
-			// Knees get a firmer, less faded drive: at low stiffness a loaded leg never reached its bend.
-			const float stiffness = joint.knee ? std::max(kDeathStiffness, kKneeMinStiffness) : kDeathStiffness;
+			// Knees get a firmer, less faded drive: at low stiffness a loaded leg never reached its bend. A stepping or
+			// hanging knee much firmer still, or the foot being pulled along straightened it.
+			const float stiffness = joint.knee ? std::max(kDeathStiffness, kKneeMinStiffness) * (swingLeg || hanging ? kSwingKneeStiffness : 1.0f) :
+			                                     kDeathStiffness;
 			// Knee floor ramps out over the last 10% of the stumble instead of snapping from kKneeMinFade to 0 at the end.
 			const float jointFade = joint.knee ? std::max(fade, std::min(kKneeMinFade, 10.0f * fade)) : fade;
 			Vec3 desired = Scale(Add(Scale(errorWorld, -kJointKp * stiffness), Scale(relativeOmega, -kJointKd * stiffness)), dt * jointFade);
