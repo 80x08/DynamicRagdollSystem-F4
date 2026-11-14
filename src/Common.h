@@ -2,7 +2,8 @@
 
 // Shared types, settings, globals and function declarations. Implementations by area:
 // Settings.cpp (TOML), Physics.cpp (bodies, joints, impulses), Reaction.cpp (non-lethal hit reaction),
-// Death.cpp (death stumble, dying phase, ground rays, grip/brace), Hooks.cpp (world update).
+// Death.cpp (death hook, dying phase, ground rays, grip/brace), DeathStumble.cpp (standing phase, balance controller),
+// DeathStagger.cpp, Walk.cpp + Walker.h (death walk, the walker), Hooks.cpp (world update).
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -144,6 +145,10 @@ namespace DynamicRagdollSystem
 		// Rolled once per death from the settings chances/ranges.
 		bool                    stumble{ true };
 		bool                    walk{ false };     // wanders on its feet (Walk.cpp) instead of the stumble, then collapses
+		bool                    stagger{ false };  // death stagger: the stumble is the walker staggering (StepDeathStagger)
+		float                   tip{ 0.0f };       // ... its rolled fDeathStaggerTip, trunk springs and braking
+		float                   staggerUpright{ 0.0f };
+		float                   staggerBraking{ 0.0f };
 		float                   flail{ 0.0f };     // rolled flail strength
 		bool                    kickPending{ false };  // hit knockdown: own push with falloff, applied once the bodies are scanned
 		Vec3                    kickPoint{};       // game units
@@ -199,10 +204,9 @@ namespace DynamicRagdollSystem
 		bool                    hitApplied{ false };
 		std::uint32_t           stepFoot{ 0 };  // body id of the swinging foot, 0 when not stepping
 		char                    stepSide{ 0 };
+		char                    lastStepSide{ 0 };  // feet alternate: the next step uses the other foot
 		float                   stepTime{ 0.3f };   // this step's duration (shorter when moving fast)
 		Vec3                    staggerLine{};      // flat direction the body staggers along, fixed the frame after the hit (0 = not yet)
-		Vec3                    staggerFrom{};      // a point on that line (the feet then)
-		std::vector<std::pair<std::uint32_t, Vec3>> stanceOffsets;  // foot body id -> flat place relative to the feet's centre
 		std::uint32_t           swingAtDeath{ 0 };  // foot body id mid-swing at death (walking), takes the first step; 0 = none
 		Vec3                    stepFrom{};
 		Vec3                    stepTo{};
@@ -357,10 +361,11 @@ namespace DynamicRagdollSystem
 		float min;
 		float max;
 	};
-	inline float kDeathStumbleChance = 0.8f;     // chance a death uses the balance/stepping controller
-	inline float kHeadshotSkipStumbleChance = 0.1f;  // chance a head shot kill skips the walk and the stumble (rolled first)
-	inline float kDeathWalkChance = 0.15f;        // chance the dead body wanders on its feet (Walk.cpp) instead of the stumble
-	inline Range kDeathWalkTime{ 4.0f, 12.0f };    // seconds the walk lasts; its strength drains over the later part
+	inline float kDeathStumbleChance = 0.8f;     // chance a death uses the balance/stepping controller (rolled after the walk and the stagger)
+	inline float kHeadshotSkipStumbleChance = 0.1f;  // chance a head shot kill skips the walk, the stagger and the stumble (rolled first)
+	inline float kDeathWalkChance = 0.3f;        // chance the dead body wanders on its feet (Walk.cpp) instead of the stagger/stumble
+	inline bool  kDeathWalkHeadlessOnly = true;  // walk only when a hit dismembered/exploded the head (g_headless)
+	inline Range kDeathWalkTime{ 4.0f, 8.0f };   // seconds the walk lasts; its strength drains over the later part
 	inline float kDeathWalkPushScale = 0.3f;      // killing-hit push on a walking body, as a fraction of fHitPush/fBodyPush
 	inline float kDeathWalkImpactTime = 0.9f;     // s the walk's support takes to recover from the killing hit ...
 	inline float kDeathWalkImpactSupport = 0.9f;  // ... starting from this fraction of full strength
@@ -392,7 +397,7 @@ namespace DynamicRagdollSystem
 	inline float kDeathKneeBend = 80.0f;         // degrees the knees fold by the end of the stumble
 	inline Range kFlailStrength{ 2.0f, 3.0f };     // limb flailing while a fast/airborne body flies, 0 = limp
 	inline float kDeathBrace = 2.5f;              // free hands reach for the ground when the body tips over (0 = off)
-	inline float kDeathFlingDamage = 100.0f;      // killing hits with at least this damage fling the body (0 = off)
+	inline float kDeathFlingDamage = 75.0f;      // killing hits with at least this damage fling the body (0 = off)
 	inline int   kDeathFlingPellets = 5;          // a killing burst with this many hits within kMultiHitWindow flings too (0 = off)
 	inline float kDyingEndDamage = 20.0f;         // damage to the corpse during the dying phase that ends it (0 = off)
 	inline bool  kDyingEndOnHeadLoss = true;      // head dismembered during the dying phase ends it
@@ -438,6 +443,20 @@ namespace DynamicRagdollSystem
 	inline float kImpactForce = 3.0f;             // knock force given to that NPC (engine explosion knockdown magnitude)
 	inline float kExplosionLift = 0.5f;          // upward part of the blast push, as a fraction of it
 	inline Range kDeathBraking{ 2.4f, 2.7f };     // horizontal braking of the dying body while its feet are planted, 1/s
+	// [DeathStagger] the death stagger: the walker staggering under the hit (tuned in RagdollLab's sim; physics units = metres, the sim's).
+	inline float kDeathStaggerChance = 1.0f;      // chance of the death stagger (rolled after the walk, before the stumble)
+	inline float kDeathStaggerStep = 1.0f;        // longest step at full strength (longer when moving fast, up to the leg's reach)
+	inline Range kDeathStaggerTip{ 0.15f, 0.25f };  // the centre of pressure lags this far behind the weight: it tips over
+	inline float kDeathStaggerSlump = 2.0f;       // rad the trunk leans toward the tip per unit of tip
+	inline float kDeathStaggerHurtLeg = 0.45f;    // share of the weight a shot leg carries standing on it alone
+	inline float kDeathStaggerFlinch = 0.35f;     // s the trunk takes to firm up after the hit (starts at 5%)
+	inline float kDeathStaggerGiveUpTilt = 1.5f;  // rad of trunk lean at which the help is gone (full below this - kGiveUpRange)
+	inline float kDeathStaggerCatchSpeed = 8.0f;  // physics units/s: up to this the stagger gets full help
+	inline float kDeathStaggerCatchRange = 12.0f;  // ... fading to none at kDeathStaggerCatchSpeed + this
+	inline Range kDeathStaggerBraking{ 0.2f, 1.0f };  // how hard the feet brake the weight, 1/s
+	constexpr Range kStaggerUpright{ 0.8f, 1.0f };  // trunk springs, times the walker's (rolled per death)
+	constexpr float kStaggerFalling = 0.6f;     // pelvis height (fraction of standing, above the feet) from which the drives fade ...
+	constexpr float kStaggerDown = 0.35f;       // ... to none here: it is down
 	inline bool  kIniHotReload = false;           // [General] bEnableHotReload, read at game start only
 	// [Knockdown] living NPCs knocked over by a burst of bullet hits (shotgun pellets) or one heavy hit.
 	inline int   kMultiHitCount = 5;                // hits needed within kMultiHitWindow (0 = off)
@@ -479,17 +498,9 @@ namespace DynamicRagdollSystem
 	constexpr float kStepTime = 0.3f;
 	constexpr float kStepHeight = 0.2f;
 	constexpr float kStepMaxLength = 0.45f;
-	// Stagger and step placement (tuned in RagdollLab's sim, physics units).
-	constexpr float kStepOvershoot = 0.1f;      // a step lands this far past the capture point along the stagger line
-	constexpr float kStaggerSpeed = 1.0f;       // units/s the body is carried along the stagger line (fades with strength)
-	constexpr float kLiftedFoot = 0.08f;        // a foot this far above its ground is up: it steps down at once, takes no reaction
+	constexpr float kStepMinLength = 0.2f;      // shorter steps were hard to see
 	constexpr float kSwingingFoot = 1.0f;       // units/s faster than the other foot, flat, at death: that foot is mid-swing
-	constexpr float kStepReach = 0.45f;         // a step lands at most this far from its hip, flat (beyond, the leg goes straight)
-	constexpr float kFootGap = 0.15f;           // a step lands at least this far to its own side of the other foot
-	constexpr float kStanceMax = 0.15f;         // a foot keeps at most this offset from the feet's centre (a stride is narrowed)
 	constexpr float kSwingKneeBend = 50.0f;     // extra degrees the stepping knee folds mid-swing
-	constexpr float kSwingKneeStiffness = 4.0f; // stepping (or hanging) knee servo, times the standing knee's
-	constexpr float kHangingKneeBend = 60.0f;   // degrees a knee folds to while its foot is up and not stepping
 	constexpr float kKneeMinStiffness = 1.0f;   // knees bend with at least this stiffness, even if fDeathStiffness is low
 	constexpr float kKneeMinFade = 0.4f;        // knee drive never fades below this during the stumble
 	constexpr float kStepCooldown = 0.12f;
@@ -931,11 +942,19 @@ namespace DynamicRagdollSystem
 	void CastCrawlRay(Death& a_death, RE::Actor* a_actor, RE::bhkWorld* a_world);
 	void ApplyBrace(Death& a_death, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_lean, float a_scale,
 		float a_ground);
+	// DeathStumble.cpp: the standing phase of a death (walk, stagger or balance controller).
 	void StepDeathStumble(Death& a_stumble, RE::Actor* a_actor, float a_now);
 	void StepWrithe(Death& a_death, RE::Actor* a_actor, float a_now);
 	// Walk.cpp: death walk (the active-ragdoll walker), run by StepDeathStumble instead of the stumble while Death::walk.
 	enum class WalkResult { kWalking, kFallen, kUnable };  // kUnable: the skeleton can't walk (falls back to the stumble)
 	WalkResult StepDeathWalk(Death& a_death, RE::Actor* a_actor, RE::hknpBSWorld* a_world, float a_dt, float a_now);
+	// DeathStagger.cpp: the death stagger (Death::stagger), the walker staggering under the hit. a_fade: strength left (1 → 0 over the
+	// stumble); a_help: 0..1, how catchable it still is. kFallen: a leg or the pelvis is gone (collapses); kUnable: the
+	// skeleton can't stand on the walker (StepDeathStumble falls back to the balance controller).
+	WalkResult StepDeathStagger(Death& a_death, RE::Actor* a_actor, RE::hknpBSWorld* a_world, float a_dt, float a_now, float a_fade, float a_help);
+	constexpr float kGroundWait = 0.3f;  // s the walker waits for the ground ray before guessing it from the feet
+	struct Capsule { Vec3 a, b; float radius{}; };  // body-local segment
+	bool ReadCapsule(const RE::hknpBody& a_body, Capsule& a_out);
 	float      DeathWalkDrain(const Death& a_death, float a_now);  // 1 = full strength, drains to 0 over the walk
 	void       EndDeathWalk(RE::TESFormID a_formID);
 	void       ClearDeathWalks();

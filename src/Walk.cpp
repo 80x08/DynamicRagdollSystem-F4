@@ -1,7 +1,4 @@
-#include "Common.h"
-
-#include <numbers>
-#include <unordered_map>
+#include "Walker.h"
 
 // Death walk: port of RagdollLab's active-ragdoll walker (RagdollLab src/Puppet.cpp: Walk, HoldTrunk, DriveLeg, Brace; its
 // sim/src/Puppet.cpp is the same algorithm in Jolt). Keep the controller in step with RagdollLab.
@@ -11,171 +8,8 @@
 
 namespace DynamicRagdollSystem
 {
-	namespace
+	namespace walker
 	{
-		// RagdollLab's [Puppet] defaults (physics units = metres).
-		constexpr float kWalkLeash = 0.35f;      // the walk target may run this far ahead of the real pelvis
-		constexpr float kWalkCrouch = 0.9f;      // lowest the pelvis goes while walking, fraction of standing height
-		constexpr float kWalkKp = 100.0f, kWalkKd = 18.0f, kWalkMaxAccel = 60.0f;      // trunk position spring
-		constexpr float kWalkSpinKp = 60.0f, kWalkSpinKd = 14.0f, kWalkMaxSpin = 60.0f;  // trunk orientation spring
-		constexpr float kWalkStepTime = 0.32f, kWalkStepLift = 0.15f, kWalkStepTrigger = 0.12f, kWalkStepLead = 0.5f;
-		constexpr float kWalkSwingKp = 30.0f, kWalkSwingAccel = 150.0f, kWalkStanceHold = 60.0f;
-		constexpr float kContact = 0.05f;   // a foot this far above its standing height still counts as on the ground
-		constexpr float kStraight = 0.97f;  // a leg counts as straight at this fraction of its standing length
-		// Wandering and dying (death walk only).
-		constexpr float kWalkHold = 0.4f;                  // fraction of the walk at full strength; then it drains to nothing
-		constexpr float kWalkSoft = 0.35f;                 // trunk springs at the end, fraction of full: it sways and sags
-		constexpr float kFallenHeight = 0.55f;             // pelvis below this fraction of standing height: fallen
-		constexpr float kFallenTilt = 0.5f;                // trunk's up axis below this (z): fallen
-		constexpr float kGroundWait = 0.3f;                // s to wait for the ground ray before guessing it from the feet
-		constexpr float kPi = std::numbers::pi_v<float>, kTwoPi = 2.0f * kPi, kDegToRad = kPi / 180.0f;
-
-		constexpr Vec3 kX{ 1.0f, 0.0f, 0.0f }, kY{ 0.0f, 1.0f, 0.0f }, kZ{ 0.0f, 0.0f, 1.0f };
-
-		struct Capsule { Vec3 a, b; float radius{}; };  // body-local segment
-
-		struct Part
-		{
-			std::uint32_t id{};
-			Vec3          offset;  // from the pelvis, in the facing frame
-			Mat3          rot{};   // orientation in the facing frame
-		};
-
-		struct Foot
-		{
-			std::uint32_t id{}, calf{}, thigh{};
-			Vec3          offset;  // x/y from the pelvis in the facing frame, z = height above the ground
-			float         leg{};   // pelvis-to-foot length in the side view
-			float         thighLength{}, shinLength{}, thighCom{}, shinCom{};  // hip-knee, knee-ankle; centre of mass as a fraction of each
-		};
-
-		struct Walker
-		{
-			float                                      deathStart{};  // the death this walker belongs to (a revived NPC dies again)
-			std::vector<Part>                          trunk;         // trunk[0] = pelvis
-			std::vector<std::uint32_t>                 arms;          // carried by the trunk's support
-			Foot                                       feet[2];
-			std::unordered_map<std::uint32_t, Capsule> shapes;
-			float                                      standHeight{ 1.0f };  // pelvis above the ground
-			float                                      yaw{};                // facing (game heading)
-			float                                      heading{};            // wander direction (game heading)
-			float                                      nextTurn{};
-			float                                      weavePhase{}, weaveRate{}, weaveSize{}, lurchPhase{};  // drunken zigzag
-			float                                      ground{};
-			float                                      time{};               // simulated seconds (sum of Havok steps)
-			Vec3                                       root;                 // where the pelvis should be (x/y)
-			Vec3                                       moveVel;
-			int                                        swing{ -1 }, lastSwing{ -1 };
-			float                                      swingStart{}, landed{ -1.0e9f };
-			Vec3                                       swingFrom;
-			std::uint32_t                              steps{};
-		};
-		std::unordered_map<RE::TESFormID, Walker> g_walkers;  // main thread (Havok step, g_mutex held)
-
-		Vec3 Flat(Vec3 a_v) { return { a_v.x, a_v.y, 0.0f }; }
-		Vec3 Clamp(Vec3 a_v, float a_max)
-		{
-			const float n = Length(a_v);
-			return n > a_max && n > 0.0f ? Scale(a_v, a_max / n) : a_v;
-		}
-		Vec3 UnitOr(Vec3 a_v, Vec3 a_fallback) { return Length(a_v) > 1.0e-6f ? Unit(a_v) : a_fallback; }
-		float Smooth(float a_t)
-		{
-			a_t = std::clamp(a_t, 0.0f, 1.0f);
-			return a_t * a_t * (3.0f - 2.0f * a_t);
-		}
-		float YawOf(Vec3 a_dir) { return std::atan2(a_dir.x, a_dir.y); }
-		// Game heading (0 = +Y, clockwise) as a rotation about Z: forward (+Y local) -> (sin, cos), right (+X) -> (cos, -sin).
-		Mat3 Yaw(float a_heading)
-		{
-			const float c = std::cos(a_heading), s = std::sin(a_heading);
-			return { c, s, 0.0f, -s, c, 0.0f, 0.0f, 0.0f, 1.0f };
-		}
-
-		// hknpBody +0x48 shape; hknpCapsuleShape: convex radius +0x14, segment ends +0x50 / +0x60 (RE_NOTES, RagdollLab).
-		bool ReadCapsule(const RE::hknpBody& a_body, Capsule& a_out)
-		{
-			std::uintptr_t shape = 0;
-			float          a[4]{}, b[4]{};
-			const auto     base = reinterpret_cast<std::uintptr_t>(&a_body);
-			if (!SafeRead(base + 0x48, &shape, sizeof(shape)) || !shape || !SafeRead(shape + 0x14, &a_out.radius, sizeof(float)) ||
-				!SafeRead(shape + 0x50, a, sizeof(a)) || !SafeRead(shape + 0x60, b, sizeof(b)))
-				return false;
-			a_out.a = { a[0], a[1], a[2] };
-			a_out.b = { b[0], b[1], b[2] };
-			return a_out.radius > 0.0f && a_out.radius < 0.5f && Length(Sub(a_out.a, a_out.b)) < 1.0f;
-		}
-
-		// One Havok step's view of the walker: reads and pushes bodies.
-		struct Ctx
-		{
-			RE::hknpBSWorld*                                    world;
-			Walker&                                             s;
-			std::unordered_map<std::uint32_t, const RE::hknpBody*> bodies;  // this step's bodies by id
-			float                                               dt, gravity;  // gravity: up is +
-			float                                               strength{ 1.0f };   // scales every drive's acceleration cap
-			float                                               stiffness{ 1.0f };  // scales the trunk springs and damping
-			float                                               support{ 1.0f };    // scales the trunk's lift
-
-			const RE::hknpBody* Body(std::uint32_t a_id) const
-			{
-				const auto it = bodies.find(a_id);
-				return it == bodies.end() ? nullptr : it->second;
-			}
-			Vec3 Pos(std::uint32_t a_id) const
-			{
-				const auto* b = Body(a_id);
-				return b ? BodyPosition(*b) : Vec3{};
-			}
-			Mat3 Rot(std::uint32_t a_id) const
-			{
-				const auto* b = Body(a_id);
-				return b ? RotationFrom(b->m_transform.m_rotation) : Yaw(0.0f);
-			}
-			Vec3 World(std::uint32_t a_id, Vec3 a_local) const { return Add(Pos(a_id), Rotate(Rot(a_id), a_local)); }
-			Vec3 Com(std::uint32_t a_id) const  // capsule middle
-			{
-				const auto it = s.shapes.find(a_id);
-				return it == s.shapes.end() ? Pos(a_id) : World(a_id, Scale(Add(it->second.a, it->second.b), 0.5f));
-			}
-			bool Read(std::uint32_t a_id, MotionState& a_m) const
-			{
-				const auto* b = Body(a_id);
-				return b && ReadMotionState(world, *b, a_m) && a_m.inverseMass > 0.0f;
-			}
-			Vec3 Vel(std::uint32_t a_id) const
-			{
-				MotionState m{};
-				return Read(a_id, m) ? m.linear : Vec3{};
-			}
-			float Mass(std::uint32_t a_id) const
-			{
-				MotionState m{};
-				return Read(a_id, m) ? 1.0f / m.inverseMass : 0.0f;
-			}
-			void Push(std::uint32_t a_id, Vec3 a_impulse) const
-			{
-				RE::hkVector4f impulse{ a_impulse.x, a_impulse.y, a_impulse.z, 0.0f };
-				g_linearImpulse(world, a_id, &impulse);
-			}
-			void AddVelocity(std::uint32_t a_id, const MotionState& a_m, Vec3 a_dv) const { Push(a_id, Scale(a_dv, 1.0f / a_m.inverseMass)); }
-			void AddVel(std::uint32_t a_id, Vec3 a_dv) const
-			{
-				MotionState m{};
-				if (Read(a_id, m)) AddVelocity(a_id, m, a_dv);
-			}
-			void AddSpin(std::uint32_t a_id, const MotionState& a_m, Vec3 a_dw) const  // world-frame angular velocity change
-			{
-				float inverse[3][3]{};
-				AddWorldInverse(a_m, inverse);
-				Vec3 impulse{};
-				if (!g_angularImpulse || !Solve3(inverse, a_dw, impulse)) return;
-				RE::hkVector4f native{ impulse.x, impulse.y, impulse.z, 0.0f };
-				g_angularImpulse(world, a_id, &native);
-			}
-			Mat3 BodyFrame() const { return Multiply(Rot(s.trunk[0].id), Transpose(s.trunk[0].rot)); }  // standing: Yaw(yaw)
-		};
-
 		// Trunk support: every trunk body is pulled toward its place in the standing pose, laid out in a_frame from a_base
 		// (the pelvis), carrying its own weight plus the arms'. Returns the impulse, which the caller hands to the ground.
 		Vec3 HoldTrunk(Ctx& c, Vec3 a_base, const Mat3& a_frame, Vec3 a_vel)
@@ -191,6 +25,10 @@ namespace DynamicRagdollSystem
 				if (!c.Read(t.id, m)) continue;
 				const auto target = Add(a_base, Rotate(a_frame, t.offset));
 				auto dv = Scale(Add(Scale(Sub(target, c.Pos(t.id)), kWalkKp * c.stiffness), Scale(Sub(a_vel, m.linear), kWalkKd * c.stiffness)), c.dt);
+				if (c.feetOnly) {  // the rest takes a step
+					const auto side = Clamp(Flat(dv), kAnkleAccel * c.dt);
+					dv = { side.x, side.y, dv.z };
+				}
 				dv.z += c.gravity * c.dt * carry * c.support;
 				dv = Clamp(dv, kWalkMaxAccel * c.strength * c.dt);
 				c.AddVelocity(t.id, m, dv);
@@ -246,6 +84,36 @@ namespace DynamicRagdollSystem
 			}
 		}
 
+		// The planted feet's calves hold still sideways.
+		void HoldStance(Ctx& c, const bool a_down[2])
+		{
+			const float hold = std::min(1.0f, kWalkStanceHold * c.dt);
+			for (int i = 0; i < 2; ++i)
+				if (i != c.s.swing && a_down[i]) c.AddVel(c.s.feet[i].calf, Scale(Flat(c.Vel(c.s.feet[i].calf)), -hold));
+		}
+
+		// a_p moved out to a_foot's own side of the other foot (turning would otherwise swing one leg through the other).
+		Vec3 OwnSide(const Ctx& c, Vec3 a_p, int a_foot, Vec3 a_right)
+		{
+			const auto& feet = c.s.feet;
+			const float side = (a_foot == 0) == (feet[0].offset.x < feet[1].offset.x) ? -1.0f : 1.0f;
+			const float minWidth = 0.6f * std::abs(feet[0].offset.x - feet[1].offset.x);
+			const float lateral = Dot(Sub(a_p, c.Pos(feet[1 - a_foot].id)), a_right) * side;
+			return lateral < minWidth ? Add(a_p, Scale(a_right, side * (minWidth - lateral))) : a_p;
+		}
+
+		// The swing foot along a lifted arc to a_to over a_time, on its own side of the planted foot; the leg's push is
+		// taken from the pelvis.
+		void Swing(Ctx& c, Vec3 a_to, float a_time, const Mat3& a_facing)
+		{
+			auto&       s = c.s;
+			const float phase = std::min(1.0f, (s.time - s.swingStart) / a_time);
+			const float travel = Smooth(phase);
+			auto        arc = OwnSide(c, Add(s.swingFrom, Scale(Sub(a_to, s.swingFrom), travel)), s.swing, Rotate(a_facing, kX));
+			arc.z = s.swingFrom.z + (a_to.z - s.swingFrom.z) * travel + kWalkStepLift * std::sin(std::numbers::pi_v<float> * std::min(1.0f, phase * 1.25f));
+			c.Push(s.trunk[0].id, Scale(DriveLeg(c, s.swing, arc, Rotate(a_facing, kY)), -1.0f));
+		}
+
 		// One step of walking toward s.moveVel (RagdollLab's Walk, firm mode). False while no foot is planted (limp).
 		bool Walk(Ctx& c)
 		{
@@ -289,12 +157,6 @@ namespace DynamicRagdollSystem
 			const Vec3 base{ s.root.x, s.root.y, s.ground + height };
 
 			// 1. Stepping. Each foot's spot: under its hip, led ahead by the walking speed, and never across the other foot.
-			const float side[2]{ s.feet[0].offset.x < s.feet[1].offset.x ? -1.0f : 1.0f, s.feet[0].offset.x < s.feet[1].offset.x ? 1.0f : -1.0f };
-			const float minWidth = 0.6f * std::abs(s.feet[0].offset.x - s.feet[1].offset.x);
-			const auto  ownSide = [&](Vec3 a_p, int a_foot) {
-				const float lateral = Dot(Sub(a_p, c.Pos(s.feet[1 - a_foot].id)), right) * side[a_foot];
-				return lateral < minWidth ? Add(a_p, Scale(right, side[a_foot] * (minWidth - lateral))) : a_p;
-			};
 			Vec3  spot[2];
 			float off[2]{};
 			for (int i = 0; i < 2; ++i) {
@@ -303,7 +165,7 @@ namespace DynamicRagdollSystem
 				spot[i].z = s.ground + o.z;
 				const auto hip = Add(Flat(pelvisPos), Scale(right, o.x));
 				const auto reach = Clamp(Sub(Flat(spot[i]), hip), reachAt(i, lowest));
-				spot[i] = ownSide({ hip.x + reach.x, hip.y + reach.y, spot[i].z }, i);
+				spot[i] = OwnSide(c, { hip.x + reach.x, hip.y + reach.y, spot[i].z }, i, right);
 				off[i] = Length(Flat(Sub(spot[i], c.Pos(s.feet[i].id))));
 			}
 			// A swing ends when its time is up and the foot is down; a step starts only while the other foot stands.
@@ -332,26 +194,18 @@ namespace DynamicRagdollSystem
 			if (planted.empty()) return false;  // airborne: limp until a foot comes down
 
 			// 3. Swing foot: along a lifted arc to its spot; the leg's push is taken from the pelvis.
-			if (s.swing >= 0) {
-				const float phase = std::min(1.0f, (s.time - s.swingStart) / kWalkStepTime);
-				const auto  to = spot[s.swing];
-				const float travel = Smooth(phase);
-				auto        arc = ownSide(Add(s.swingFrom, Scale(Sub(to, s.swingFrom), travel)), s.swing);
-				arc.z = s.swingFrom.z + (to.z - s.swingFrom.z) * travel + kWalkStepLift * std::sin(std::numbers::pi_v<float> * std::min(1.0f, phase * 1.25f));
-				c.Push(s.trunk[0].id, Scale(DriveLeg(c, s.swing, arc, Rotate(facing, kY)), -1.0f));
-			}
+			if (s.swing >= 0) Swing(c, spot[s.swing], kWalkStepTime, facing);
 
 			// 4. Support, handed to the planted feet; 5. their calves hold still sideways.
 			Brace(c, HoldTrunk(c, base, facing, rootVel), planted);
-			const float hold = std::min(1.0f, kWalkStanceHold * dt);
-			for (int i = 0; i < 2; ++i)
-				if (i != s.swing && down[i]) c.AddVel(s.feet[i].calf, Scale(Flat(c.Vel(s.feet[i].calf)), -hold));
+			HoldStance(c, down);
 			return true;
 		}
 
 		// Builds the walker from the death pose (a_death.targets: the animated pose captured on the first frame), like
-		// RagdollLab's Puppet() from the live bodies. False if the skeleton lacks a pelvis, two feet, or a leg above each.
-		bool Setup(const Death& a_death, RE::Actor* a_actor, const std::vector<const BodyRef*>& a_refs, const Ctx& a_c, Walker& a_s)
+		// RagdollLab's Puppet() from the live bodies, facing a_yaw. False if the skeleton lacks a pelvis, two feet, or a leg
+		// above each.
+		bool Setup(const Death& a_death, float a_yaw, const std::vector<const BodyRef*>& a_refs, const Ctx& a_c, Walker& a_s)
 		{
 			const auto target = [&](std::uint32_t a_id) -> const BodyTarget* {
 				for (const auto& t : a_death.targets)
@@ -376,7 +230,7 @@ namespace DynamicRagdollSystem
 			const auto* pt = pelvis ? target(pelvis->id.m_value) : nullptr;
 			if (!pt || feet.size() != 2) return false;
 			a_s.deathStart = a_death.start;
-			a_s.yaw = a_actor->data.angle.z;
+			a_s.yaw = a_yaw;
 			const auto facing = Transpose(Yaw(a_s.yaw));
 			const auto p = pt->pos;
 			a_s.standHeight = std::clamp(p.z - a_s.ground, 0.5f, 1.5f);
@@ -424,6 +278,8 @@ namespace DynamicRagdollSystem
 		}
 	}
 
+	using namespace walker;
+
 	WalkResult StepDeathWalk(Death& a_death, RE::Actor* a_actor, RE::hknpBSWorld* a_world, float a_dt, float a_now)
 	{
 		if (!g_linearImpulse || a_dt <= 0.0f) return WalkResult::kUnable;
@@ -442,7 +298,7 @@ namespace DynamicRagdollSystem
 			if (!a_death.groundCaptured && a_now - a_death.start < kGroundWait) return WalkResult::kWalking;
 			s = Walker{};
 			s.ground = a_death.groundCaptured ? a_death.groundAtDeath : a_death.feetCaptured.z - 0.1f;
-			if (!Setup(a_death, a_actor, refs, c, s)) {
+			if (!Setup(a_death, a_actor->data.angle.z, refs, c, s)) {
 				g_walkers.erase(a_death.formID);
 				REX::INFO("DynamicRagdollSystem: {:08X} death walk: skeleton not usable (needs a pelvis and two legs); stumbles instead"sv, a_death.formID);
 				return WalkResult::kUnable;
@@ -511,6 +367,21 @@ namespace DynamicRagdollSystem
 		const float span = std::max(a_death.end - a_death.start, 0.01f);
 		const float progress = std::clamp((a_now - a_death.start) / span, 0.0f, 1.0f);
 		return 1.0f - Smooth((progress - kWalkHold) / (1.0f - kWalkHold));
+	}
+
+
+	// hknpBody +0x48 shape; hknpCapsuleShape: convex radius +0x14, segment ends +0x50 / +0x60 (RE_NOTES, RagdollLab).
+	bool ReadCapsule(const RE::hknpBody& a_body, Capsule& a_out)
+	{
+		std::uintptr_t shape = 0;
+		float          a[4]{}, b[4]{};
+		const auto     base = reinterpret_cast<std::uintptr_t>(&a_body);
+		if (!SafeRead(base + 0x48, &shape, sizeof(shape)) || !shape || !SafeRead(shape + 0x14, &a_out.radius, sizeof(float)) ||
+			!SafeRead(shape + 0x50, a, sizeof(a)) || !SafeRead(shape + 0x60, b, sizeof(b)))
+			return false;
+		a_out.a = { a[0], a[1], a[2] };
+		a_out.b = { b[0], b[1], b[2] };
+		return a_out.radius > 0.0f && a_out.radius < 0.5f && Length(Sub(a_out.a, a_out.b)) < 1.0f;
 	}
 
 	void EndDeathWalk(RE::TESFormID a_formID) { g_walkers.erase(a_formID); }

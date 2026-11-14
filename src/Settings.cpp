@@ -161,9 +161,8 @@ bDisableDeathAnimation = true
 # NPCs that keep the vanilla death (death animation, no stumble, grip, twitching or crawl). Same format as
 # [Reaction] sBlacklist.
 sBlacklist = ["Fallout4.esm|0x0D77E3"]  # VertibirdRace: vertibirds
-# Chance the dead body tries to stay up for a moment (balance, stepping) before it collapses.
-fDeathStumbleChance = 0.8
-# Chance a head shot kill collapses at once: no walk, no stumble. Rolled first, before [DeathWalk] fDeathWalkChance. Range 0-1.
+# Chance a head shot kill collapses at once: no walk, no stagger, no stumble. Rolled first, before [DeathWalk]
+# fDeathWalkChance. Range 0-1.
 fHeadshotSkipStumbleChance = 0.1
 # Chance one hand clutches the body part the killing shot hit, while stumbling and after falling.
 fDeathGripChance = 0.7
@@ -172,17 +171,6 @@ fTwitchChance = 0.65
 # Seconds the dead body fights to stay up; its strength decays steadily over this time. Range 0.2-15.
 fDeathStumbleTimeMin = 2.3
 fDeathStumbleTimeMax = 2.6
-# How much of its weight the dying body is held up with at first (0 = none, 1 = fully). Range 0-1.
-fDeathSupportMin = 0.6
-fDeathSupportMax = 0.8
-# Joint stiffness of the dying body (lower = floppier). Range 0-3.
-fDeathStiffness = 0.2
-# How hard the dying body is pushed back upright. Low lets it tip, so it steps to catch itself; high holds the
-# torso up. Range 0-3.
-fDeathUprightMin = 0.4
-fDeathUprightMax = 0.6
-# Degrees the knees fold by the end of the stumble, so the body sinks instead of stiff legs (0 = off). Range 0-120.
-fDeathKneeBend = 80.0
 # Push of the killing hit, as a fraction of fHitPush/fBodyPush (a full-strength push topples the body at once). Range 0-3.
 fDeathPushScale = 0.4
 # Fraction of a weapon's own death knockback that is kept (1 = vanilla). Strong guns otherwise launch the body
@@ -207,11 +195,6 @@ fHeadlessRollScale = 0.5
 # Free hands (not the one clutching the wound) reach for the ground when the dying body tips over, like catching
 # a fall. 0 = off. Range 0-3.
 fDeathBrace = 2.5
-# Speed (physics units/s; running is about 4-5) up to which the dying body gets full help to stay up and step.
-# Faster deaths get less help and fall with their momentum. Range 0-20.
-fDeathCatchSpeed = 4.0
-# Help fades to nothing over this much extra speed above fDeathCatchSpeed. Range 0-20.
-fDeathCatchRange = 6.0
 # After the stumble, seconds the body keeps clutching the wound, twitching and rolling a little before it is
 # fully limp (everything fades out over this time). 0 = limp right after the stumble. Range 0-30.
 fDyingTimeMin = 3.0
@@ -233,16 +216,12 @@ fRollAccel = 160.0
 bDeathRollArms = false
 # Seconds after the body is down before its twitches and rolls start. Range 0-10.
 fTwitchDelay = 0.0
-# How quickly a dying body that is still on its feet loses its momentum (higher = stops sooner, lower = glides
-# further). Range 0-20.
-fDeathBrakingMin = 2.4
-fDeathBrakingMax = 2.7
 # Arms and legs swing around while a dying body flies through the air (died while moving fast, or knocked off its
 # feet), until it lands. 0 = limp. Range 0-3.
 fFlailStrengthMin = 2.0
 fFlailStrengthMax = 3.0
-# Chance an explosion death still tries to stay up like other deaths. Otherwise it is flung by the blast (no
-# balance help, the limbs flail in the air). Range 0-1.
+# Chance an explosion death still tries to stay up like other deaths (its walk/stagger/stumble rolls kept). Otherwise
+# it is flung by the blast (death stumble with no balance help, the limbs flail in the air). Range 0-1.
 fExplosionStumbleChance = 0.0
 # Blast speed given to the whole body of a flung explosion death (physics units/s; running is about 4-5),
 # picked per death. Range 0-50.
@@ -266,13 +245,76 @@ fRagdollImpactForce = 3.0
 # through the body. Also makes dead bodies collide with each other. false = vanilla.
 bRagdollSelfCollision = true
 
+[DeathStumble]
+# The death stumble: the dead body tries to stay up for a moment (balance, stepping) before it collapses. Its
+# balance controller also takes over from a stagger that cannot stand and ends a death walk shot too much.
+# The [Death] stumble times, push, grip, brace and flail settings apply to it too.
+# Chance of the death stumble.
+# Rolled last: after the head shot skip, [DeathWalk] fDeathWalkChance and [DeathStagger] fDeathStaggerChance.
+fDeathStumbleChance = 0.8
+# How much of its weight the dying body is held up with at first (0 = none, 1 = fully). Range 0-1.
+fDeathSupportMin = 0.6
+fDeathSupportMax = 0.8
+# Joint stiffness of the dying body (lower = floppier). Range 0-3.
+fDeathStiffness = 0.2
+# How hard the dying body is pushed back upright. Low lets it tip, so it steps to catch itself; high holds the
+# torso up. Range 0-3.
+fDeathUprightMin = 0.4
+fDeathUprightMax = 0.6
+# Degrees the knees fold by the end of the stumble, so the body sinks instead of stiff legs (0 = off).
+# Range 0-120.
+fDeathKneeBend = 80.0
+# Speed (physics units/s; running is about 4-5) up to which the dying body gets full help to stay up and step.
+# Faster deaths get less help and fall with their momentum. (The stagger has
+# [DeathStagger] fDeathStaggerCatchSpeed/Range.) Range 0-20.
+fDeathCatchSpeed = 4.0
+# Help fades to nothing over this much extra speed above fDeathCatchSpeed. Range 0-20.
+fDeathCatchRange = 6.0
+# How quickly a dying body that is still on its feet loses its momentum (higher = stops sooner, lower = glides
+# further). (The stagger has [DeathStagger] fDeathStaggerBraking.) Range 0-20.
+fDeathBrakingMin = 2.4
+fDeathBrakingMax = 2.7
+
+[DeathStagger]
+# The death stagger: the dead body takes real recovery steps under the hit, loses its balance progressively and falls
+# the way it was going; a shot leg can't bear weight. It replaces the death stumble's balance controller for that death
+# (the [Death] stumble times, push, grip, brace and flail settings still apply). Flung deaths and skeletons it can't
+# stand on get the death stumble instead. Distances in physics units (~70 game units, about a metre).
+# Chance of the death stagger. Rolled after [DeathWalk] fDeathWalkChance, before [DeathStumble] fDeathStumbleChance. Range 0-1.
+fDeathStaggerChance = 1
+# Longest step at full strength; longer when moving fast, never past the leg's reach. Range 0-2.
+fDeathStaggerStep = 1
+# How far the feet stay short of holding the weight once strength fades, so it tips over and falls instead of
+# standing; picked per death. Higher = falls sooner. Range 0-1.
+fDeathStaggerTipMin = 0.15
+fDeathStaggerTipMax = 0.25
+# Radians the trunk leans toward the fall per unit of tip. Range 0-5.
+fDeathStaggerSlump = 2.0
+# Share of the weight a shot leg carries when it is the only foot down. Range 0-1.
+fDeathStaggerHurtLeg = 0.45
+# Seconds the trunk takes to firm up after the hit (it starts slack, so the blow throws the upper body). Range 0-2.
+fDeathStaggerFlinch = 0.35
+# Trunk lean (radians) at which it gives up and falls; full help up to 0.5 less. Range 0-3.
+fDeathStaggerGiveUpTilt = 1.5
+# Speed (physics units/s) up to which it gets full help; none at fDeathStaggerCatchSpeed + fDeathStaggerCatchRange.
+# Faster deaths fall with their momentum. Ranges 0-20.
+fDeathStaggerCatchSpeed = 8
+fDeathStaggerCatchRange = 12
+# How hard the planted feet brake the body (1/s; higher = stops sooner), picked per death. Range 0-20.
+fDeathStaggerBrakingMin = 0.2
+fDeathStaggerBrakingMax = 1.0
+
 [DeathWalk]
-# Chance the dead body wanders around aimlessly on its feet (instead of the stumble) until its strength drains and it
-# collapses. Rolled after the head shot skip, before [Death] fDeathStumbleChance. Range 0-1.
-fDeathWalkChance = 0.15
+# Chance the dead body wanders around aimlessly on its feet (instead of the stagger or stumble) until its strength
+# drains and it collapses (shot enough on the way: the death stumble). Rolled after the head shot skip, before
+# [DeathStagger] fDeathStaggerChance. Range 0-1.
+fDeathWalkChance = 0.3
+# true = the death walk can only happen when a hit dismembered or exploded the head/neck; such a walk is never
+# skipped by [Death] fHeadshotSkipStumbleChance.
+bDeathWalkHeadlessOnly = true
 # Seconds the death walk lasts: full strength for the first 40%, then it weakens, sags and collapses. Range 1-30.
 fDeathWalkTimeMin = 4.0
-fDeathWalkTimeMax = 12.0
+fDeathWalkTimeMax = 8.0
 # Killing-hit push on a walking body, as a fraction of fHitPush/fBodyPush (the stumble uses [Death] fDeathPushScale). Range 0-5.
 fDeathWalkPushScale = 0.3
 # Impact: the walk's support starts at fDeathWalkImpactSupport of full strength and recovers over fDeathWalkImpactTime
@@ -560,13 +602,10 @@ fCrawlTurnTime = 3.0
 		const auto readRange = [&](const std::string& a_key, Range& a_range, float a_min, float a_max) {
 			readRangeWith(readDeath, a_key, a_range, a_min, a_max);
 		};
-		readDeath("fDeathStumbleChance", kDeathStumbleChance, 0.0f, 1.0f);
 		readDeath("fHeadshotSkipStumbleChance", kHeadshotSkipStumbleChance, 0.0f, 1.0f);
 		readDeath("fDeathGripChance", kDeathGripChance, 0.0f, 1.0f);
 		readDeath("fTwitchChance", kTwitchChance, 0.0f, 1.0f);
 		readRange("fDeathStumbleTime", kDeathStumbleTime, 0.2f, 15.0f);
-		readRange("fDeathSupport", kDeathSupport, 0.0f, 1.0f);
-		readRange("fDeathUpright", kDeathUpright, 0.0f, 3.0f);
 		readRange("fDyingTime", kDyingTime, 0.0f, 30.0f);
 		readRange("fTwitchStrength", kTwitchStrength, 0.0f, 3.0f);
 		readRange("fRollStrength", kRollStrength, 0.0f, 3.0f);
@@ -574,7 +613,6 @@ fCrawlTurnTime = 3.0
 		readRange("fPowerArmorRollStrength", kPowerArmorRollStrength, 0.0f, 3.0f);
 		readDeath("fRollAccel", kRollAccel, 0.0f, 1000.0f);
 		ReadBool(root, "Death", "bDeathRollArms", kDeathRollArms);
-		readRange("fDeathBraking", kDeathBraking, 0.0f, 20.0f);
 		readRange("fFlailStrength", kFlailStrength, 0.0f, 3.0f);
 		readDeath("fExplosionStumbleChance", kExplosionStumbleChance, 0.0f, 1.0f);
 		readDeath("fDeathKnockbackScale", kDeathKnockbackScale, 0.0f, 1.0f);
@@ -594,6 +632,7 @@ fCrawlTurnTime = 3.0
 			readRangeWith(readWalk, a_key, a_range, a_min, a_max);
 		};
 		readWalk("fDeathWalkChance", kDeathWalkChance, 0.0f, 1.0f);
+		ReadBool(root, "DeathWalk", "bDeathWalkHeadlessOnly", kDeathWalkHeadlessOnly);
 		readWalkRange("fDeathWalkTime", kDeathWalkTime, 1.0f, 30.0f);
 		readWalk("fDeathWalkPushScale", kDeathWalkPushScale, 0.0f, 5.0f);
 		readWalk("fDeathWalkImpactSupport", kDeathWalkImpactSupport, 0.0f, 1.0f);
@@ -638,11 +677,39 @@ fCrawlTurnTime = 3.0
 		ReadBool(root, "Death", "bRagdollSelfCollision", kSelfCollision);
 		readDeath("fRagdollImpactSpeed", kImpactSpeed, 0.0f, 50.0f);
 		readDeath("fRagdollImpactForce", kImpactForce, 0.0f, 1000.0f);
-		readDeath("fDeathStiffness", kDeathStiffness, 0.0f, 3.0f);
 		readDeath("fDeathPushScale", kDeathPushScale, 0.0f, 3.0f);
-		readDeath("fDeathCatchSpeed", kCatchSpeed, 0.0f, 20.0f);
-		readDeath("fDeathCatchRange", kCatchRange, 0.0f, 20.0f);
-		readDeath("fDeathKneeBend", kDeathKneeBend, 0.0f, 120.0f);
+		// [DeathStumble]; these keys used to be in [Death], still read there so older files keep their values.
+		const auto readStumble = [&](const std::string& a_key, float& a_value, float a_min, float a_max) {
+			readDeath(a_key, a_value, a_min, a_max);
+			return ReadFloat(root, "DeathStumble", a_key, a_value, a_min, a_max);
+		};
+		const auto readStumbleRange = [&](const std::string& a_key, Range& a_range, float a_min, float a_max) {
+			readRangeWith(readStumble, a_key, a_range, a_min, a_max);
+		};
+		readStumble("fDeathStumbleChance", kDeathStumbleChance, 0.0f, 1.0f);
+		readStumbleRange("fDeathSupport", kDeathSupport, 0.0f, 1.0f);
+		readStumble("fDeathStiffness", kDeathStiffness, 0.0f, 3.0f);
+		readStumbleRange("fDeathUpright", kDeathUpright, 0.0f, 3.0f);
+		readStumble("fDeathKneeBend", kDeathKneeBend, 0.0f, 120.0f);
+		readStumble("fDeathCatchSpeed", kCatchSpeed, 0.0f, 20.0f);
+		readStumble("fDeathCatchRange", kCatchRange, 0.0f, 20.0f);
+		readStumbleRange("fDeathBraking", kDeathBraking, 0.0f, 20.0f);
+		const auto readStagger = [&](const std::string& a_key, float& a_value, float a_min, float a_max) {
+			return ReadFloat(root, "DeathStagger", a_key, a_value, a_min, a_max);
+		};
+		readStagger("fDeathStaggerChance", kDeathStaggerChance, 0.0f, 1.0f);
+		readStagger("fDeathStaggerStep", kDeathStaggerStep, 0.0f, 2.0f);
+		readRangeWith(readStagger, "fDeathStaggerTip", kDeathStaggerTip, 0.0f, 1.0f);
+		readStagger("fDeathStaggerSlump", kDeathStaggerSlump, 0.0f, 5.0f);
+		readStagger("fDeathStaggerHurtLeg", kDeathStaggerHurtLeg, 0.0f, 1.0f);
+		readStagger("fDeathStaggerFlinch", kDeathStaggerFlinch, 0.0f, 2.0f);
+		readStagger("fDeathStaggerGiveUpTilt", kDeathStaggerGiveUpTilt, 0.0f, 3.0f);
+		readStagger("fDeathStaggerCatchSpeed", kDeathStaggerCatchSpeed, 0.0f, 20.0f);
+		readStagger("fDeathStaggerCatchRange", kDeathStaggerCatchRange, 0.0f, 20.0f);
+		readRangeWith(readStagger, "fDeathStaggerBraking", kDeathStaggerBraking, 0.0f, 20.0f);
+		REX::INFO("DynamicRagdollSystem: death stagger: step {} tip {}-{} slump {} hurt leg {} flinch {}s give up {} rad, braking {}-{}"sv,
+			kDeathStaggerStep, kDeathStaggerTip.min, kDeathStaggerTip.max, kDeathStaggerSlump, kDeathStaggerHurtLeg, kDeathStaggerFlinch,
+			kDeathStaggerGiveUpTilt, kDeathStaggerBraking.min, kDeathStaggerBraking.max);
 		REX::INFO("DynamicRagdollSystem: settings: hotReload {}"sv, kIniHotReload);
 		REX::INFO("DynamicRagdollSystem: settings: minDamage {} cooldown {} reaction {} softness {} paSoftness {} recover {} blendOut {} push {} bodyPush {} catchUp {} pushDamageRef {} pushScale {}-{} powerAttack {} blocked {}"sv,
 			kMinDamage, kCooldown, kReactionTime, kHitSoftness, kPowerArmorHitSoftness, kRecoverTime, kBlendOut, kHitPush, kBodyPush, kMaxCatchUpSpeed,
@@ -651,8 +718,8 @@ fCrawlTurnTime = 3.0
 			kBurnReaction, kBurnStiffness, kBurnArmStiffness, kBurnFlail, kBurnShove, kBurnShoveMin, kBurnShoveMax, kBurnFallMin, kBurnFallMax,
 			kBurnFallForce, kBurnDownRoll, kBurnRollGapMin, kBurnRollGapMax, kBurnOutGrace, kBurnDownMax, kBurnDeathTwitchMin,
 			kBurnDeathTwitchMax, kBurnDeathRollMin, kBurnDeathRollMax, kBurnDeathTimeMin, kBurnDeathTimeMax);
-		REX::INFO("DynamicRagdollSystem: death settings: noDeathAnimation {} chances walk {} ({}-{}s) stumble {} (head shot skip {}) grip {} twitch {}; stiffness {} pushScale {} catchSpeed {} catchRange {} kneeBend {}; dying ends at {} damage, on head loss {}, headless roll x{}; crawl chance {} speed {} interval {} delay {} time {}-{}; twitch delay {} burn roll delay {}"sv,
-			kDisableDeathAnimation, kDeathWalkChance, kDeathWalkTime.min, kDeathWalkTime.max, kDeathStumbleChance, kHeadshotSkipStumbleChance, kDeathGripChance, kTwitchChance, kDeathStiffness, kDeathPushScale, kCatchSpeed, kCatchRange, kDeathKneeBend,
+		REX::INFO("DynamicRagdollSystem: death settings: noDeathAnimation {} chances walk {} ({}-{}s) stagger {} stumble {} (head shot skip {}) grip {} twitch {}; stiffness {} pushScale {} catchSpeed {} catchRange {} kneeBend {}; dying ends at {} damage, on head loss {}, headless roll x{}; crawl chance {} speed {} interval {} delay {} time {}-{}; twitch delay {} burn roll delay {}"sv,
+			kDisableDeathAnimation, kDeathWalkChance, kDeathWalkTime.min, kDeathWalkTime.max, kDeathStaggerChance, kDeathStumbleChance, kHeadshotSkipStumbleChance, kDeathGripChance, kTwitchChance, kDeathStiffness, kDeathPushScale, kCatchSpeed, kCatchRange, kDeathKneeBend,
 			kDyingEndDamage, kDyingEndOnHeadLoss, kHeadlessRollScale, kCrawlChance, kCrawlSpeed, kCrawlInterval, kCrawlDelay, kCrawlTime.min, kCrawlTime.max, kTwitchDelay, kBurnRollDelay);
 		REX::INFO("DynamicRagdollSystem: crawl tuning: pushAccel {} reach {} side {} lift {} elbow {} arm {} maxHeight {} stall {} minPlant {} ankle {} hip {} knee {} headTurn {} headLift {} limbAccel {} limbTorque {} turnTime {}"sv,
 			kCrawlAccel, kCrawlReach, kCrawlSide, kCrawlLift, kCrawlElbow, kCrawlArmStrength, kCrawlArmMaxHeight, kCrawlStall, kCrawlMinPlant,
