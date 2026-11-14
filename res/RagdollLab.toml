@@ -1,0 +1,81 @@
+# RagdollLab settings. [Sim] is the simulator's own; the rest is shared with the game plugin.
+
+[Sim]
+# Simulator only. Slow motion (1 = real time). Range 0.05-2.
+fTimeScale = 1
+# m/s^2. Range 0-30.
+fGravity = 9.81
+# Body and floor friction (FO4's value is not traced yet). Range 0-2.
+fFriction = 0.5
+# Bounciness. Range 0-1.
+fRestitution = 0
+# Per-body linear damping, 1/s (FO4's value is not traced yet). Range 0-5.
+fLinearDamping = 0.05
+# Per-body angular damping, 1/s. Range 0-5.
+fAngularDamping = 0.05
+# Solver velocity iterations. Range 1-50.
+fVelocitySteps = 10
+# Solver position iterations. Range 1-20.
+fPositionSteps = 2
+# F key: m/s added to the chest along the camera. Range 0-20.
+fPushSpeed = 3
+
+[Ragdoll]
+# Key 1. Knockdown push, engine explosion magnitude (0 = just fall, 10 = launch). Range 0-50.
+fForce = 4
+
+[Stumble]
+# Key 2. Push on the upper body, m/s. Range 0-50.
+fPush = 4
+# Seconds the body stays physical. Range 0.2-10.
+fDuration = 1.5
+# Pull toward the animation right after the push (fraction of the engine's own). Range 0-1.
+fSoftness = 0.1
+# Seconds to firm back up to full pull. Range 0.05-10.
+fRecoverTime = 0.8
+# Seconds at the end to fade back to pure animation. Range 0-2.
+fBlendOut = 0.3
+# m/s the ragdoll may close the gap to the animation. Range 0.1-50.
+fCatchUp = 7
+
+[Puppet]
+fGiveUpAngle = 35
+fWeakSupport = 0.25
+# Key 3. m/s with WASD. Range 0-10.
+fWalkSpeed = 1.4
+# m/s with WASD + Shift. Range 0-15.
+fRunSpeed = 3
+# rad/s the trunk turns toward the walking direction. Range 0-30.
+fTurnRate = 4
+# m the walk target may run ahead of the real pelvis. Range 0.05-3.
+fLeash = 0.35
+# Pelvis held at this fraction of its standing height (lower = bent knees). Range 0.3-1.2.
+fCrouch = 0.9
+# Trunk position spring, 1/s^2. Higher = stiffer strings, too high jitters. Range 0-500.
+fKp = 100
+# Trunk position damping, 1/s. Higher = less bounce. Range 0-100.
+fKd = 18
+# m/s^2 cap per trunk body. Below ~15 it cannot hold its weight. Range 0-500.
+fMaxAccel = 60
+# Trunk orientation spring, 1/s^2. Range 0-500.
+fSpinKp = 60
+# Trunk orientation damping, 1/s. Range 0-100.
+fSpinKd = 14
+# rad/s^2 cap per trunk body. Range 0-500.
+fMaxSpin = 60
+# Seconds per step. Range 0.05-2.
+fStepTime = 0.32
+# m the foot rises mid-step. Range 0-1.
+fStepLift = 0.15
+# m a foot may be off its spot before it steps. Range 0.01-1.
+fStepTrigger = 0.12
+# Feet land this many step times ahead of the moving body. Range 0-3.
+fStepLead = 0.5
+# Swing foot spring toward its arc, 1/s. Range 0-200.
+fSwingKp = 30
+# m/s^2 cap for the swing foot. Range 0-1000.
+fSwingAccel = 150
+# The calf gets this much of the swing foot's push (lifts the leg). Range 0-2.
+fCalfShare = 0.7
+# Planted foot and calf damping, 1/s. Keeps the standing leg from being dragged and kicking up. Range 0-200.
+fStanceHold = 60

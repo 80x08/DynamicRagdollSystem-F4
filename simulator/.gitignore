@@ -1,0 +1,6 @@
+# xmake build output and cache
+build/
+.xmake/
+
+# --frames contact sheets (written to this folder)
+*.png

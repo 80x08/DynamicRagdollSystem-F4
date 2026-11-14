@@ -56,6 +56,21 @@ at the end of `build.bat` to your own game folder, or remove them.
 - `-m debug` does not build (one of the dependency packages fails in debug mode); use `releasedbg`.
 - The version is set in two places: `xmake.lua` (`set_version`) and `src/version.h`.
 
+## Simulator
+
+`simulator/` holds RagdollLabSim, a standalone stand-in for the game's ragdoll ([Jolt Physics](https://github.com/jrouwe/JoltPhysics)
+and [raylib](https://www.raylib.com)) running ports of the plugin's controllers on the human ragdoll dumped from the
+game, for tuning without restarting Fallout 4. Point the mouse at the body and left click (the plugin's own roll of
+which death), or press `Q` (death walk), `W` (death stagger) or `E` (death stumble). It is a separate xmake project with the same requirements; from `simulator\`:
+
+```
+build.bat config     first time (downloads Jolt, raylib, nlohmann_json, toml11)
+build.bat run        build and start
+```
+
+Keys, headless tests (`--test`, `--stumble`, `--frames`), settings and what differs from the game:
+[simulator/README.md](simulator/README.md).
+
 ## License
 
 GPL-3.0, see `LICENSE`. The plugin is built with [CommonLibF4](https://github.com/Dear-Modding-FO4/commonlibf4), which
