@@ -232,12 +232,14 @@ namespace DynamicRagdollSystem
 		const BodyRef* trunk = nullptr;
 		int feet = 0;
 		bool hitAny = false;
+		Vec3 feetSum{};
 		for (const auto& body : a_death.bodies) {
 			if (!FindBody(worldBodies, body)) continue;
 			if (a_death.Detached(body.id.m_value)) continue;
 			if (!trunk || body.priority < trunk->priority) trunk = &body;
 			if (!body.foot || feet >= 2) continue;
 			const auto pos = BodyPosition(worldBodies[body.index]);
+			feetSum = Add(feetSum, pos);
 			float ground = pos.z - kRayDown;
 			hitAny |= CastGround(cell, pos, ground);
 			a_death.groundFootId[feet] = body.id.m_value;
@@ -263,6 +265,23 @@ namespace DynamicRagdollSystem
 			a_death.groundAtDeath = feet == 2 ? 0.5f * (a_death.groundFoot[0] + a_death.groundFoot[1]) : a_death.groundFoot[0];
 			REX::INFO("DynamicRagdollSystem: {:08X} ground ray: feet {:.2f} above the ground at death"sv, a_death.formID,
 				a_death.feetCaptured.z - a_death.groundAtDeath);
+			// Slope or stairs around the feet: the stagger stands only on its feet and steps by rays, so it gets the
+			// stumble instead. Checked once, before the stagger starts (it waits for this ray). Missed rays are ignored.
+			if (a_death.stagger && kDeathStaggerUneven > 0.0f) {
+				const Vec3 centre = Scale(feetSum, 1.0f / static_cast<float>(feet));
+				float      uneven = feet == 2 ? std::abs(a_death.groundFoot[0] - a_death.groundFoot[1]) : 0.0f;
+				for (int k = 0; k < kUnevenRays; ++k) {
+					const float angle = 6.2831853f * static_cast<float>(k) / static_cast<float>(kUnevenRays);
+					float       ground = 0.0f;
+					if (CastGround(cell, Vec3{ centre.x + kUnevenRadius * std::cos(angle), centre.y + kUnevenRadius * std::sin(angle), a_death.groundAtDeath + kStepRayLift }, ground))
+						uneven = std::max(uneven, std::abs(ground - a_death.groundAtDeath));
+				}
+				if (uneven > kDeathStaggerUneven) {
+					a_death.stagger = false;  // the balance controller (StepDeathStumble) from the start
+					REX::INFO("DynamicRagdollSystem: {:08X} death stagger: uneven ground ({:.2f} within {:.2f} of the feet); stumble instead"sv,
+						a_death.formID, uneven, kUnevenRadius);
+				}
+			}
 		}
 		a_death.groundValid = true;
 	}
@@ -898,6 +917,10 @@ namespace DynamicRagdollSystem
 			death.walk = (!kDeathWalkHeadlessOnly || headless) && Random() < kDeathWalkChance;
 			death.stagger = !death.walk && Random() < kDeathStaggerChance;
 			death.stumble = death.stagger || (!death.walk && Random() < kDeathStumbleChance);
+			if (death.stagger && kDeathStaggerCrouchStumble && actor->IsSneaking()) {  // crouched: no standing pose to stagger from; the stumble instead
+				death.stagger = false;
+				REX::INFO("DynamicRagdollSystem: {:08X} death stagger: crouched; stumble instead"sv, formID);
+			}
 			death.grip = Random() < kDeathGripChance;
 			const bool moves = Random() < kTwitchChance;
 			// Burned to death (on fire at KillImpl): its own, stronger writhing, whatever the twitch chance rolled.

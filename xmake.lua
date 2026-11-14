@@ -33,6 +33,10 @@ target("DynamicRagdollSystem")
     set_pcxxheader("src/pch.h")
     add_packages("toml11")
 
+    -- res/DynamicRagdollSystem.toml is the default settings file, embedded as a header
+    add_rules("utils.bin2c", {extensions = {".toml"}})
+    add_files("res/DynamicRagdollSystem.toml")
+
 
 
 

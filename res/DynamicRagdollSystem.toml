@@ -2,10 +2,10 @@
 # Values outside the allowed range are clamped. Missing values use defaults.
 
 [General]
-# true = write diagnostic messages to DynamicRagdollSystem.log. Only read at game start.
+# true = write diagnostic messages to DynamicRagdollSystem.log
 bDebugLog = true
-# true = re-read this file about once a second whenever it is saved, so changes apply without loading a save.
-bEnableHotReload = true
+# true = re-read this file in every second while the game is running.
+bEnableHotReload = false
 
 [Reaction]
 # true = hit reactions only on humans, ghouls, feral ghouls and super mutants.
@@ -16,8 +16,7 @@ bHumanoidOnly = false
 sBlacklist = ["Fallout4.esm|0x0B2BF3", "Fallout4.esm|0x0D77E3"]  # ActorTypeTurret: turrets, VertibirdRace: vertibirds
 # Minimum damage of a single hit that triggers a reaction. Range 0-10000.
 fMinDamage = 5.0
-# Hits on the same NPC closer together than this (seconds) are ignored, e.g. shotgun pellets. Range 0-60.
-# A hit during a reaction restarts it.
+# Hits on the same NPC closer together than this (seconds) are ignored, e.g. shotgun pellets. A hit during a reaction restarts it. Range 0-60.
 fCooldown = 0.1
 # Seconds the body stays physical after a hit. Range 0.2-10.
 fReactionTime = 1.5
@@ -29,14 +28,11 @@ fPowerArmorHitSoftness = 0.5
 fRecoverTime = 0.8
 # Seconds at the end of the reaction to blend back to pure animation. Range 0-2.
 fBlendOut = 0.3
-# Shove on the body part that was hit, along the shot direction. Range 0-50.
-# (Melee and explosions have no hit body part: the whole upper body gets this.)
+# Shove on the body part that was hit, along the shot direction. Range 0-50. (Melee and explosions have no hit body part: the whole upper body gets this)
 fHitPush = 8.0
-# Shove on the body parts one joint away from the one that was hit; halved for each further joint, none past
-# three joints. Range 0-50.
+# Shove on the body parts one joint away from the one that was hit; halved for each further joint, none past three joints. Range 0-50.
 fBodyPush = 5.5
-# Both shoves scale with the damage of the hit: fPushDamageRef damage gives them as set, half that damage half
-# the shove, and so on, kept within fPushScaleMin-fPushScaleMax. 0 = same shove for every hit. Range 0-10000.
+# Both shoves scale with the damage of the hit: fPushDamageRef damage gives them as set, half that damage half the shove, and so on, kept within fPushScaleMin-fPushScaleMax. 0 = same shove for every hit. Range 0-10000.
 fPushDamageRef = 25.0
 # Range 0-10.
 fPushScaleMin = 0.5
@@ -54,28 +50,24 @@ fAttackSoftness = 0.1
 fAttackCatchUpSpeed = 9.0
 
 [Knockdown]
-# Living NPCs knocked over by bullet hits: the engine's ragdoll knockdown, then they get up by themselves. Two triggers,
-# each with its own chance and force: a burst of hits at nearly the same moment (shotgun pellets, each its own hit),
-# and one heavy hit. Explosion hits never count (explosions knock NPCs down by themselves). Hits that kill go to the
-# [Death] ragdoll instead.
+# Living NPCs knocked over by bullet hits
 
-# Burst: hits needed. Pellets land within a few milliseconds of each other, so automatic weapons do not count as one
-# burst. Not every pellet lands at range (a double-barrel lands 3-8 of its 8). 0 = off. Range 0-100.
+# Number of bullets needed to hit the target at within seconds of fMultiHitWindow to trigger chance knockdown. 0 = off. Range 0-100.
 iMultiHitCount = 5
 # Seconds from the first hit of a burst in which the other hits must land. Range 0.001-2.
 fMultiHitWindow = 0.05
 # Total damage of those hits must also reach this. 0 = any. Range 0-10000.
 fMultiHitMinDamage = 5.0
-# Chance a burst that meets the above knocks the NPC down (rolled once per burst). Range 0-1.
-fMultiHitChance = 0.3
+# Chance a to actually trigger the knockdown once above requirements have been met. Range 0-1.
+fMultiHitChance = 0.2
 # How hard it is knocked over (engine knockdown force, as fRagdollImpactForce). Range 0-1000.
 fMultiHitForce = 16.5
 
-# Heavy hit: one hit with at least this much damage (e.g. a sniper rifle, a power attack). 0 = off. Range 0-100000.
+# Heavy hit: one hit with at least this much damage to trigger knockdown. 0 = off. Range 0-100000.
 # Killing hits are handled by [Death] instead (fDeathFlingDamage).
 fHeavyHitDamage = 75.0
 # Chance and force of the heavy-hit knockdown. Ranges 0-1, 0-1000.
-fHeavyHitChance = 0.3
+fHeavyHitChance = 0.2
 fHeavyHitForce = 16.5
 # Where the push comes from: the hit's impact point. Force above is the speed of the body part that was hit; the other
 # parts get less the farther they are from the impact point. Distance in game units (a body is ~130 tall).
@@ -148,47 +140,43 @@ fBurnDeathTimeMax = 10.0
 # Each death rolls its own values: chances are 0-1 (0 = never, 1 = always), and each Min/Max pair picks a
 # random value in between (set both the same for a fixed value).
 
-# true = NPCs skip the vanilla death animation and go straight to the death ragdoll (creatures whose ragdoll does not fit their skeleton keep it).
+# Only 1 animation gets triggered during each phase: skip, walk, stagger, stumble. The priority goes like this:
+# BALANCE PHASE: [roll fHeadshotSkipStumbleChance -> roll fDeathWalkChance -> roll fDeathStaggerChance -> roll fDeathStumbleChance] 
+#  ***body is lying down at the floor at this point***
+# DYING PHASE: [roll fCrawlChance -> roll fTwitchChance]
+#
+
+# true = NPCs skip the vanilla death animation and go straight to the death ragdoll. Recommended always to be true.
 bDisableDeathAnimation = true
-# NPCs that keep the vanilla death (death animation, no stumble, grip, twitching or crawl). Same format as
-# [Reaction] sBlacklist.
+# NPCs that keep the vanilla death (death animation, no stumble, grip, twitching or crawl). Same format as [Reaction] sBlacklist.
 sBlacklist = ["Fallout4.esm|0x0D77E3"]  # VertibirdRace: vertibirds
-# Chance a head shot kill collapses at once: no walk, no stagger, no stumble. Rolled first, before [DeathWalk]
-# fDeathWalkChance. Range 0-1.
+# Chance a head shot kill collapses at once: no walk, no stagger, no stumble. Highest priority, rolled first
 fHeadshotSkipStumbleChance = 0.1
 # Chance one hand clutches the body part the killing shot hit, while stumbling and after falling.
-fDeathGripChance = 0.7
+fDeathGripChance = 0.75
 # Chance the body twitches and rolls on the ground after it falls.
 fTwitchChance = 0.65
 # Seconds the dead body fights to stay up; its strength decays steadily over this time. Range 0.2-15.
 fDeathStumbleTimeMin = 2.3
-fDeathStumbleTimeMax = 2.6
+fDeathStumbleTimeMax = 3.0
 # Push of the killing hit, as a fraction of fHitPush/fBodyPush (a full-strength push topples the body at once). Range 0-3.
 fDeathPushScale = 0.4
 # Fraction of a weapon's own death knockback that is kept (1 = vanilla). Strong guns otherwise launch the body
 # too fast for the stumble to play. The NPC's movement before death and explosions are not affected. Range 0-1.
 fDeathKnockbackScale = 0.4
-# Killing hits with at least this much damage blow the body away instead of stumbling (e.g. a Gauss rifle): full
-# weapon knockback, no balance help, limbs flail in the air. The knockback log line shows each kill's damage.
-# 0 = off. Range 0-100000.
+# Skips animation and sends kill flying if damage is this or higher
 fDeathFlingDamage = 75.0
-# Same for a killing pellet burst (shotguns): at least this many hits landing within [Knockdown] fMultiHitWindow
-# of the first. 0 = off. Range 0-100.
+# Skips animation and sends kill flying if this number of bullets hit at once
 iDeathFlingPellets = 5
 # Damage a dying body (clutching/twitching/rolling after the stumble or walk) takes before it goes limp
-# at once, summed over hits. 0 = off. Range 0-10000.
 fDyingEndDamage = 20.0
-# true = a dying body goes limp at once when its head is dismembered (a head already off when the dying phase starts
-# does not count). false = off.
+# true = a dying body goes limp at once when its head is dismembered (a head already off when the dying phase starts does not count). false = off.
 bDyingEndOnHeadLoss = true
-# Roll strength of a dying body whose head was already dismembered when the dying phase started, as a fraction of
-# fRollStrength (1 = same). Range 0-1.
-fHeadlessRollScale = 0.5
-# Free hands (not the one clutching the wound) reach for the ground when the dying body tips over, like catching
-# a fall. 0 = off. Range 0-3.
+# Roll strength of a dying body whose head was already dismembered when the dying phase started, as a fraction of fRollStrength (1 = same). Range 0-1.
+fHeadlessRollScale = 0.7
+# Free hands (not the one clutching the wound) reach for the ground when the dying body tips over, like catching a fall. 0 = off. Range 0-3.
 fDeathBrace = 2.5
-# After the stumble, seconds the body keeps clutching the wound, twitching and rolling a little before it is
-# fully limp (everything fades out over this time). 0 = limp right after the stumble. Range 0-30.
+# After the stumble, seconds the body keeps clutching the wound, twitching and rolling a little before it is fully limp (everything fades out over this time). 0 = limp right after the stumble. Range 0-30.
 fDyingTimeMin = 3.0
 fDyingTimeMax = 15.0
 # Strength of the dying twitches. Range 0-3.
@@ -204,7 +192,7 @@ fPowerArmorRollStrengthMin = 0.5
 fPowerArmorRollStrengthMax = 1.0
 # How hard a dying roll turns the trunk (rad/s^2 at roll strength 1). Also the crawl turn-over. Range 0-1000.
 fRollAccel = 160.0
-# true = dying rolls also swing the arms with the trunk (can fling a hand and drag the body over); false = the arms follow the shoulders.
+# true = dying rolls also swing the arms with the trunk (behaves like the roll on fire)
 bDeathRollArms = false
 # Seconds after the body is down before its twitches and rolls start. Range 0-10.
 fTwitchDelay = 0.0
@@ -221,29 +209,25 @@ fExplosionPushMin = 3.0
 fExplosionPushMax = 10.0
 # Upward part of the blast, as a fraction of the push (0 = flat, 1 = as much up as away). Range 0-2.
 fExplosionLift = 0.5
-# true = dead and knocked-down bodies collide with living NPCs instead of passing through them, and knock them over
-# when they hit them fast enough (fRagdollImpactSpeed). Also lets walking NPCs bump into corpses on the floor.
-# false = vanilla (no contact, no knock-over).
+# true = dead and knocked-down bodies collide with living NPCs instead of passing through them, and knock them over when they hit them fast enough (fRagdollImpactSpeed).
 bRagdollCollideWithNPCs = true
-# false = NPCs in power armor are never knocked over by ragdolls (bodies still bump into them); a power armor body
-# still knocks over others.
+# false = NPCs in power armor are never knocked over by ragdolls
 bRagdollKnockDownPowerArmor = true
-# Dead or knocked-down bodies flying at least this fast (physics units/s; running is about 4-5) knock over
-# standing NPCs they run into. 0 = no knock-over (the collision stays). Range 0-50.
+# Dead or knocked-down bodies flying at least this fast (physics units/s; running is about 4-5). 0 = no knock-over (clips through like vanilla). Range 0-50.
 fRagdollImpactSpeed = 1.0
 # How hard the NPC that was run into is knocked over (engine knockdown force, as fBurnFallForce). Range 0-1000.
 fRagdollImpactForce = 3.0
-# true = forearms and hands of dead and knocked-down bodies collide with their own torso, so flailing arms do not pass
-# through the body. Also makes dead bodies collide with each other. false = vanilla.
+# true = forearms and hands of dead and knocked-down bodies collide with their own torso, so flailing arms do not pass through the body.
 bRagdollSelfCollision = true
 
 [DeathStumble]
+# short length balance animation
 # The death stumble: the dead body tries to stay up for a moment (balance, stepping) before it collapses. Its
 # balance controller also takes over from a stagger that cannot stand and ends a death walk shot too much.
-# The [Death] stumble times, push, grip, brace and flail settings apply to it too.
+# The [Death] stumble times, push, grip, brace and flail settings affect this.
+
 # Chance of the death stumble.
-# Rolled last: after the head shot skip, [DeathWalk] fDeathWalkChance and [DeathStagger] fDeathStaggerChance.
-fDeathStumbleChance = 0.8
+fDeathStumbleChance = 1.0
 # How much of its weight the dying body is held up with at first (0 = none, 1 = fully). Range 0-1.
 fDeathSupportMin = 0.6
 fDeathSupportMax = 0.8
@@ -268,18 +252,17 @@ fDeathBrakingMin = 2.4
 fDeathBrakingMax = 2.7
 
 [DeathStagger]
-# The death stagger: the dead body takes real recovery steps under the hit, loses its balance progressively and falls
-# the way it was going; a shot leg can't bear weight. It replaces the death stumble's balance controller for that death
-# (the [Death] stumble times, push, grip, brace and flail settings still apply). Flung deaths and skeletons it can't
-# stand on get the death stumble instead. Distances in physics units (~70 game units, about a metre).
-# Chance of the death stagger. Rolled after [DeathWalk] fDeathWalkChance, before [DeathStumble] fDeathStumbleChance. Range 0-1.
-fDeathStaggerChance = 1
+# medium length balance animation - introduced in 1.2.0
+# The death stagger: the dead body takes real recovery steps under the hit, loses its balance progressively and falls the way it was going.
+# The [Death] stumble times, push, grip, brace and flail settings affect this.
+
+fDeathStaggerChance = 0.75
 # Longest step at full strength; longer when moving fast, never past the leg's reach. Range 0-2.
 fDeathStaggerStep = 1
 # How far the feet stay short of holding the weight once strength fades, so it tips over and falls instead of
 # standing; picked per death. Higher = falls sooner. Range 0-1.
-fDeathStaggerTipMin = 0.15
-fDeathStaggerTipMax = 0.25
+fDeathStaggerTipMin = 0.05
+fDeathStaggerTipMax = 0.15
 # Radians the trunk leans toward the fall per unit of tip. Range 0-5.
 fDeathStaggerSlump = 2.0
 # Share of the weight a shot leg carries when it is the only foot down. Range 0-1.
@@ -295,14 +278,18 @@ fDeathStaggerCatchRange = 12
 # How hard the planted feet brake the body (1/s; higher = stops sooner), picked per death. Range 0-20.
 fDeathStaggerBrakingMin = 0.2
 fDeathStaggerBrakingMax = 1.0
+# Slopes and stairs: when the ground within about a step of the feet (~55 game units) is higher or lower than under
+# the feet by more than this, the death gets the death stumble instead.
+# Physics units (0.15 = ~10 game units, about half a stair step). 0 = off. Range 0-3.
+fDeathStaggerUneven = 0.15
+# true = NPCs crouched (sneaking) when they die get the death stumble instead of the stagger. false = they can stagger.
+bDeathStaggerCrouchStumble = true
 
 [DeathWalk]
-# Chance the dead body wanders around aimlessly on its feet (instead of the stagger or stumble) until its strength
-# drains and it collapses (shot enough on the way: the death stumble). Rolled after the head shot skip, before
-# [DeathStagger] fDeathStaggerChance. Range 0-1.
+# long length balance animation - introduced in 1.2.0
+# Chance the dead body wanders around aimlessly on its feet (instead of the stagger or stumble) until its strength drains and it collapses
 fDeathWalkChance = 0.3
-# true = the death walk can only happen when a hit dismembered or exploded the head/neck; such a walk is never
-# skipped by [Death] fHeadshotSkipStumbleChance.
+# true = the death walk can only happen when a hit dismembered or exploded the head/neck
 bDeathWalkHeadlessOnly = true
 # Seconds the death walk lasts: full strength for the first 40%, then it weakens, sags and collapses. Range 1-30.
 fDeathWalkTimeMin = 4.0

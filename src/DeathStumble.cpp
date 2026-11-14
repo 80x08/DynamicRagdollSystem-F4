@@ -68,6 +68,25 @@ namespace DynamicRagdollSystem
 		}
 	}
 
+	// How hard the limbs flail (0..1), for the stagger and the balance controller: while the body cannot be caught (faster
+	// than a_catchSpeed, fully at + a_catchRange) or is off the ground, until it lands; also while falling off a ledge.
+	// a_feet: the feet's midpoint, nullptr when there is none. Heights are above the ground it stood on.
+	static float FlailAmount(Death& a_stumble, Vec3 a_com, Vec3 a_vel, const Vec3* a_feet, float a_feetLevel, float a_trunkLevel,
+		float a_catchSpeed, float a_catchRange)
+	{
+		// Off the ground = feet up *and* the COM at least near standing height: buckling knees fold the feet up in a collapse.
+		if (a_stumble.standHeight <= 0.0f) a_stumble.standHeight = a_com.z - a_trunkLevel;
+		const bool airborne = a_feet && a_feet->z - a_feetLevel >= kGroundTolerance && a_com.z - a_trunkLevel > 0.9f * a_stumble.standHeight;
+		// Height above the ground it stood on (not above its own feet: a tumbling body has its feet level with it).
+		const bool  landed = a_com.z - a_trunkLevel < kFlailGround;
+		const float speed = std::sqrt(a_vel.x * a_vel.x + a_vel.y * a_vel.y);
+		const float fast = std::clamp((speed - a_catchSpeed) / std::max(a_catchRange, 0.1f), 0.0f, 1.0f);
+		// Falling (e.g. off a ledge, feet below the captured ground) also flails, until the drop slows down.
+		// Only below the ground it stood on, so an ordinary collapse to the floor does not flail on the way down.
+		const float falling = a_com.z - a_trunkLevel < -0.3f ? std::clamp((-a_vel.z - 1.5f) / 1.5f, 0.0f, 1.0f) : 0.0f;
+		return std::max(landed ? 0.0f : std::max(fast, airborne ? 1.0f : 0.0f), falling);
+	}
+
 	void StepDeathStumble(Death& a_stumble, RE::Actor* a_actor, float a_now)
 	{
 		auto* world = GetWorld(a_actor);
@@ -254,10 +273,11 @@ namespace DynamicRagdollSystem
 		// balance controller below, which still runs for the death stumble, flung deaths (never staggering) and a skeleton
 		// the walker can't stand on. Around it, as below: knockback trim, killing push, grip, brace, flail.
 		if (a_stumble.stagger && !a_stumble.flung && mass > 0.0f && trunk && trunk->priority < 99) {
-			if (!a_stumble.groundCaptured && a_now - a_stumble.start < kGroundWait) return;  // the ground ray comes a frame later
 			const Vec3 centre = Scale(com, 1.0f / mass);
 			Vec3 velocity = Scale(comVel, 1.0f / mass);
-			TrimKnockback(a_stumble, npWorld, samples, velocity, a_now);
+			TrimKnockback(a_stumble, npWorld, samples, velocity, a_now);  // before the wait: its window is as short
+			comVel = Scale(velocity, mass);  // trimmed, for the balance controller below if the stagger can't start
+			if (!a_stumble.groundCaptured && a_now - a_stumble.start < kGroundWait) return;  // the ground ray comes a frame later
 			const auto* pelvis = &*std::find_if(samples.begin(), samples.end(), [&](const Sample& a_s) { return a_s.ref == trunk; });
 			// Faster than fDeathStaggerCatchSpeed (+fDeathStaggerCatchRange), or leaning past fDeathStaggerGiveUpTilt, cannot be caught: the help fades into a fall.
 			float lean = 0.0f;
@@ -291,14 +311,9 @@ namespace DynamicRagdollSystem
 			}
 			if (result == WalkResult::kWalking) {
 				ApplyKillingPush(a_stumble, npWorld, samples, centre, mass, kDeathPushScale);
-				// Flail while it cannot be caught (too fast) or is off the ground, until it lands; also falling off a ledge.
-				Vec3 feetAt{};
-				if (a_stumble.standHeight <= 0.0f) a_stumble.standHeight = centre.z - trunkLevel;
-				const bool  airborne = feetMidpoint(feetAt) && feetAt.z - feetLevel >= kGroundTolerance && centre.z - trunkLevel > 0.9f * a_stumble.standHeight;
-				const bool  landed = centre.z - trunkLevel < kFlailGround;
-				const float fast = std::clamp((speed - kDeathStaggerCatchSpeed) / std::max(kDeathStaggerCatchRange, 0.1f), 0.0f, 1.0f);
-				const float drop = centre.z - trunkLevel < -0.3f ? std::clamp((-velocity.z - 1.5f) / 1.5f, 0.0f, 1.0f) : 0.0f;
-				const float flailing = std::max(landed ? 0.0f : std::max(fast, airborne ? 1.0f : 0.0f), drop);
+				Vec3        feetAt{};
+				const float flailing = FlailAmount(a_stumble, centre, velocity, feetMidpoint(feetAt) ? &feetAt : nullptr, feetLevel, trunkLevel,
+					kDeathStaggerCatchSpeed, kDeathStaggerCatchRange);
 				if (a_stumble.grip) ApplyGrip(a_stumble, npWorld, samples, dt, 1.0f);
 				a_stumble.braceAmount = 0.0f;
 				a_stumble.braceOff = -1.0f;
@@ -346,18 +361,7 @@ namespace DynamicRagdollSystem
 			const float lean = Length(tiltError);
 			const float upright = std::clamp((kGiveUpTilt - lean) / kGiveUpRange, 0.0f, 1.0f);
 			const float catchable = std::clamp(1.0f - (speed - kCatchSpeed) / kCatchRange, 0.0f, 1.0f) * upright;
-			// Flail while it cannot catch itself (too fast) or it is off the ground, until it lands. Off the ground =
-			// feet up *and* the COM at least near standing height: buckling knees fold the feet up in a collapse.
-			if (a_stumble.standHeight <= 0.0f) a_stumble.standHeight = com.z - trunkLevel;
-			const bool airborne = feet.z - feetLevel >= kGroundTolerance && com.z - trunkLevel > 0.9f * a_stumble.standHeight;
-			// Height above the ground it stood on (not above its own feet: a tumbling body has its feet level with it).
-			const bool landed = com.z - trunkLevel < kFlailGround;
-			const float fast = std::clamp((speed - kCatchSpeed) / std::max(kCatchRange, 0.1f), 0.0f, 1.0f);
-			// Falling (e.g. off a ledge, feet below the captured ground) also flails, until the drop slows down.
-			// Only below the ground it stood on, so an ordinary collapse to the floor does not flail on the way down.
-			const bool belowGround = com.z - trunkLevel < -0.3f;
-			const float falling = belowGround ? std::clamp((-comVel.z - 1.5f) / 1.5f, 0.0f, 1.0f) : 0.0f;
-			flailAmount = std::max(landed ? 0.0f : std::max(fast, airborne ? 1.0f : 0.0f), falling);
+			flailAmount = FlailAmount(a_stumble, com, comVel, &feet, feetLevel, trunkLevel, kCatchSpeed, kCatchRange);
 			Vec3 dOmega = Scale(Add(Scale(tiltError, -kTiltKp * a_stumble.upright), Scale(omega, -kTiltKd * a_stumble.upright)), dt * fade * catchable);
 			if (const float n = Length(dOmega); n > kTiltMaxDeltaOmega) dOmega = Scale(dOmega, kTiltMaxDeltaOmega / n);
 			// Yaw has no target (facing may change) but is damped, otherwise hits set the rig spinning.

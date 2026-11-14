@@ -342,9 +342,9 @@ namespace DynamicRagdollSystem
 	inline float kBurnShoveMax = 1.2f;       // ... picked at random in this range
 	inline float kBurnFallMin = 2.0f;        // seconds of burning before the NPC loses its balance and falls ...
 	inline float kBurnFallMax = 4.0f;        // ... picked per burn (both 0 = never falls)
-	inline float kBurnFallForce = 3.0f;      // knock force of the fall (engine explosion knockdown magnitude)
+	inline float kBurnFallForce = 2.5f;      // knock force of the fall (engine explosion knockdown magnitude)
 	inline float kBurnOutGrace = 1.0f;     // seconds without a fire effect before a burning NPC on the ground may get up
-	inline float kBurnDownMax = 60.0f;     // safety cap on lying there burning (fire hazards can keep it lit)
+	inline float kBurnDownMax = 45.0f;     // safety cap on lying there burning (fire hazards can keep it lit)
 	inline float kBurnDownRoll = 1.2f;     // roll strength of a burning NPC on the ground
 	inline float kBurnRollGapMin = 0.4f;   // seconds between its rolls ...
 	inline float kBurnRollGapMax = 0.8f;   // ... picked at random in this range
@@ -361,7 +361,7 @@ namespace DynamicRagdollSystem
 		float min;
 		float max;
 	};
-	inline float kDeathStumbleChance = 0.8f;     // chance a death uses the balance/stepping controller (rolled after the walk and the stagger)
+	inline float kDeathStumbleChance = 1.0f;     // chance a death uses the balance/stepping controller (rolled after the walk and the stagger)
 	inline float kHeadshotSkipStumbleChance = 0.1f;  // chance a head shot kill skips the walk, the stagger and the stumble (rolled first)
 	inline float kDeathWalkChance = 0.3f;        // chance the dead body wanders on its feet (Walk.cpp) instead of the stagger/stumble
 	inline bool  kDeathWalkHeadlessOnly = true;  // walk only when a hit dismembered/exploded the head (g_headless)
@@ -378,10 +378,10 @@ namespace DynamicRagdollSystem
 	inline float kDeathWalkDrift = 60.0f;         // degrees: largest random change of the wander direction ...
 	inline Range kDeathWalkDriftGap{ 0.8f, 2.0f };  // ... every this many seconds
 	inline float kDeathWalkSharpTurnChance = 0.3f;  // chance a change of direction is a complete random turn instead
-	inline float kDeathGripChance = 0.7f;        // chance a hand clutches the body part the killing shot hit
+	inline float kDeathGripChance = 0.75f;        // chance a hand clutches the body part the killing shot hit
 	inline float kTwitchChance = 0.65f;          // chance the body twitches and rolls after it falls
 
-	inline Range kDeathStumbleTime{ 2.3f, 2.6f }; // seconds the dead body tries to stay up before collapsing
+	inline Range kDeathStumbleTime{ 2.3f, 3.0f }; // seconds the dead body tries to stay up before collapsing
 	inline Range kDeathSupport{ 0.6f, 0.8f };     // fraction of gravity the controller carries at the moment of death
 	inline float kDeathStiffness = 0.2f;         // scales joint and upright stiffness of the dying body
 	inline float kDeathPushScale = 0.4f;         // killing-hit push as a fraction of fHitPush/fBodyPush
@@ -401,7 +401,7 @@ namespace DynamicRagdollSystem
 	inline int   kDeathFlingPellets = 5;          // a killing burst with this many hits within kMultiHitWindow flings too (0 = off)
 	inline float kDyingEndDamage = 20.0f;         // damage to the corpse during the dying phase that ends it (0 = off)
 	inline bool  kDyingEndOnHeadLoss = true;      // head dismembered during the dying phase ends it
-	inline float kHeadlessRollScale = 0.5f;       // roll strength factor when the dying phase starts without a head
+	inline float kHeadlessRollScale = 0.7f;       // roll strength factor when the dying phase starts without a head
 	inline float kCrawlChance = 0.3f;             // chance a body lying face down crawls instead of twitching (wins over kTwitchChance)
 	inline float kCrawlInterval = 2.4f;           // s: one reach + pull of an arm; the arms are half of it apart
 	inline float kCrawlSpeed = 0.7f;              // peak forward speed of the body nudge while an arm pulls, physics units/s
@@ -444,9 +444,9 @@ namespace DynamicRagdollSystem
 	inline float kExplosionLift = 0.5f;          // upward part of the blast push, as a fraction of it
 	inline Range kDeathBraking{ 2.4f, 2.7f };     // horizontal braking of the dying body while its feet are planted, 1/s
 	// [DeathStagger] the death stagger: the walker staggering under the hit (tuned in RagdollLab's sim; physics units = metres, the sim's).
-	inline float kDeathStaggerChance = 1.0f;      // chance of the death stagger (rolled after the walk, before the stumble)
+	inline float kDeathStaggerChance = 0.75f;      // chance of the death stagger (rolled after the walk, before the stumble)
 	inline float kDeathStaggerStep = 1.0f;        // longest step at full strength (longer when moving fast, up to the leg's reach)
-	inline Range kDeathStaggerTip{ 0.15f, 0.25f };  // the centre of pressure lags this far behind the weight: it tips over
+	inline Range kDeathStaggerTip{ 0.05f, 0.15f };  // the centre of pressure lags this far behind the weight: it tips over
 	inline float kDeathStaggerSlump = 2.0f;       // rad the trunk leans toward the tip per unit of tip
 	inline float kDeathStaggerHurtLeg = 0.45f;    // share of the weight a shot leg carries standing on it alone
 	inline float kDeathStaggerFlinch = 0.35f;     // s the trunk takes to firm up after the hit (starts at 5%)
@@ -454,6 +454,10 @@ namespace DynamicRagdollSystem
 	inline float kDeathStaggerCatchSpeed = 8.0f;  // physics units/s: up to this the stagger gets full help
 	inline float kDeathStaggerCatchRange = 12.0f;  // ... fading to none at kDeathStaggerCatchSpeed + this
 	inline Range kDeathStaggerBraking{ 0.2f, 1.0f };  // how hard the feet brake the weight, 1/s
+	inline bool  kDeathStaggerCrouchStumble = true;  // crouched (sneaking) at death: the stumble instead of the stagger
+	inline float kDeathStaggerUneven = 0.15f;     // ground around the feet differing this much: the stumble instead (0 = off)
+	constexpr float kUnevenRadius = 0.8f;         // ... checked by kUnevenRays rays this far from the feet (about a step)
+	constexpr int   kUnevenRays = 8;
 	constexpr Range kStaggerUpright{ 0.8f, 1.0f };  // trunk springs, times the walker's (rolled per death)
 	constexpr float kStaggerFalling = 0.6f;     // pelvis height (fraction of standing, above the feet) from which the drives fade ...
 	constexpr float kStaggerDown = 0.35f;       // ... to none here: it is down
@@ -462,10 +466,10 @@ namespace DynamicRagdollSystem
 	inline int   kMultiHitCount = 5;                // hits needed within kMultiHitWindow (0 = off)
 	inline float kMultiHitWindow = 0.05f;           // s from the first hit of a burst
 	inline float kMultiHitMinDamage = 5.0f;         // total damage of the counted hits must also reach this
-	inline float kMultiHitChance = 0.3f;            // rolled once per burst that reaches kMultiHitCount
+	inline float kMultiHitChance = 0.2f;            // rolled once per burst that reaches kMultiHitCount
 	inline float kMultiHitForce = 16.5f;             // engine explosion knockdown magnitude
 	inline float kHeavyHitDamage = 75.0f;           // one hit with at least this damage (0 = off)
-	inline float kHeavyHitChance = 0.3f;
+	inline float kHeavyHitChance = 0.2f;
 	inline float kHeavyHitForce = 16.5f;
 	inline float kHitKnockReach = 40.0f;         // game units from the impact point where the push is at its minimum
 	inline float kHitKnockMinFraction = 0.1f;    // push of the farthest bodies, fraction of the force
