@@ -312,18 +312,18 @@ namespace DynamicRagdollSystem
 	// Tunables, overridden by Data\F4SE\Plugins\DynamicRagdollSystem.toml (see LoadSettings).
 	inline float kMinDamage = 5.0f;         // minimum damage of a single hit that triggers a reaction
 	inline bool  kReactHumanoidOnly = false;     // hit reactions only on humanoid races (creature skeletons sink: no foot bones by name)
-	inline float kCooldown = 0.1f;          // hits on the same NPC closer than this are ignored (shotgun pellets)
-	inline float kReactionTime = 1.5f;      // how long the ragdoll is physical after a hit
+	inline float kCooldown = 0.3f;          // hits on the same NPC closer than this are ignored (shotgun pellets)
+	inline float kReactionTime = 1.3f;      // how long the ragdoll is physical after a hit
 	inline float kHitSoftness = 0.1f;       // controller gains right after the hit, as a fraction of the engine defaults
 	inline float kPowerArmorHitSoftness = 0.5f;  // kHitSoftness for NPCs in power armor
 	inline float kRecoverTime = 0.8f;      // gains ramp from kHitSoftness back to 1 over this time
 	inline float kBlendOut = 0.3f;          // ragdoll weight fades to 0 over the end of the reaction
 	inline float kHitPush = 8.0f;           // velocity kick on the body part that was hit, physics units/s
 	inline float kBodyPush = 5.5f;          // kick on bodies one joint from the hit body (halved per further joint), physics units/s
-	inline float kPushDamageRef = 25.0f;    // damage that gives fHitPush/fBodyPush as set (0 = push ignores damage)
+	inline float kPushDamageRef = 50.0f;    // damage that gives fHitPush/fBodyPush as set (0 = push ignores damage)
 	inline float kPushScaleMin = 0.5f;      // damage scale clamp
-	inline float kPushScaleMax = 2.0f;
-	inline float kPushPowerAttackMult = 1.5f;  // extra scale for melee power attacks
+	inline float kPushScaleMax = 1.3f;
+	inline float kPushPowerAttackMult = 1.05f;  // extra scale for melee power attacks
 	inline float kPushBlockedMult = 0.6f;      // extra scale for blocked hits
 	constexpr std::int32_t kPushRings = 3;     // joints from the hit body that still get pushed
 	constexpr float kFloorBodyHeight = 0.36f;  // body centre this far above the lowest one = floor level (~25 game units): no downward push

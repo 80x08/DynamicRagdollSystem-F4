@@ -17,9 +17,9 @@ sBlacklist = ["Fallout4.esm|0x0B2BF3", "Fallout4.esm|0x0D77E3"]  # ActorTypeTurr
 # Minimum damage of a single hit that triggers a reaction. Range 0-10000.
 fMinDamage = 5.0
 # Hits on the same NPC closer together than this (seconds) are ignored, e.g. shotgun pellets. A hit during a reaction restarts it. Range 0-60.
-fCooldown = 0.1
+fCooldown = 0.3
 # Seconds the body stays physical after a hit. Range 0.2-10.
-fReactionTime = 1.5
+fReactionTime = 1.3
 # Body stiffness right after the hit, as a fraction of normal (0 = fully limp, 1 = no give). Range 0-1.
 fHitSoftness = 0.1
 # fHitSoftness for NPCs in power armor. Range 0-1.
@@ -33,12 +33,12 @@ fHitPush = 8.0
 # Shove on the body parts one joint away from the one that was hit; halved for each further joint, none past three joints. Range 0-50.
 fBodyPush = 5.5
 # Both shoves scale with the damage of the hit: fPushDamageRef damage gives them as set, half that damage half the shove, and so on, kept within fPushScaleMin-fPushScaleMax. 0 = same shove for every hit. Range 0-10000.
-fPushDamageRef = 25.0
+fPushDamageRef = 50.0
 # Range 0-10.
 fPushScaleMin = 0.5
-fPushScaleMax = 2.0
+fPushScaleMax = 1.3
 # Extra shove factor for melee power attacks, and for blocked hits. Range 0-10.
-fPushPowerAttackMult = 1.5
+fPushPowerAttackMult = 1.05
 fPushBlockedMult = 0.6
 # How fast the body may catch up with the animated pose. Range 0.5-100.
 fMaxCatchUpSpeed = 7.0

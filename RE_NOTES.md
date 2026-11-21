@@ -356,3 +356,11 @@ arms) and sets the per-bone map byte (after the `capacity × elementSize` data, 
 ragdoll bones, assuming the map is indexed by ragdoll skeleton bone (capacity matched the ragdoll's bone count, 17/18).
 *(Unverified beyond that; if burning arms stay stiff, check the map indexing.)*
 
+
+## Live dismemberment: "Severed Limbs" node (OG 1.10.163)
+`0x1402ADF20` spawns the cut-off limb: `GetObjectByName(actor3D, "Severed Limbs")` (BSFixedString global
+`0x1458D5010`, created + `AttachChild` (vtable +0x1D0) if missing), attaches the limb clone under it, then
+`0x141D8DA80(limb, 0, 1)`, `SetDismemberedLimb` (`0x141D71050`, op 10 through the callback table at `0x143851E90`
+indexed by op), adds it to the world (`0x141D70A50`) and `SetMotionType(limb, dynamic, 1, 1, 1)`. So a live actor's
+3D carries its severed limbs as separate dynamic objects: tree-wide calls on the actor root must skip that node
+(`ForEachRagdollTree` in Physics.cpp). The actor's own arm ragdoll joints stay (joint count unchanged after an arm cut).

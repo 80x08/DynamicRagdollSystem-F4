@@ -424,6 +424,13 @@ namespace DynamicRagdollSystem
 			const bool head = name.contains("Head"sv) || name.contains("HEAD"sv) || name.contains("Neck"sv) || name.contains("NECK"sv);
 			const BodyRef ref{ worldIndex, body.m_id, parentId, bone, parentIndex, constraintId, pelvis, spine, leg, priority, foot, side, hand, arm, knee, head };
 			a_stumble.bodies.push_back(ref);
+			// Limb cut off before this scan (live ghoul/synth): its joint is already gone, so UpdateDetached never sees it.
+			if (constraintId < 0 && parentIndex >= 0 && bodies[parentIndex].m_flags.all(RE::hknpCollisionFlagsEnum::kIsDynamic) &&
+				(arm || leg) && !a_stumble.Detached(bodyId)) {
+				a_stumble.detached.push_back(bodyId);
+				REX::INFO("DynamicRagdollSystem: {:08X} body {} '{}' has no joint (limb already dismembered); ignored"sv,
+					a_stumble.formID, bodyId, nameView);
+			}
 			if (constraintId >= 0 && parentIndex >= 0 && (spine || leg || arm)) {  // arms: dying twitches only
 				a_stumble.joints.push_back(ref);
 			}
@@ -645,13 +652,30 @@ namespace DynamicRagdollSystem
 	}
 
 
+	// Live dismemberment parents each cut-off limb (its own dynamic physics object) under a "Severed Limbs" node of
+	// the actor's 3D (OG 0x1402ADF20: GetObjectByName/AttachChild, then SetMotionType dynamic). The actor's ragdoll
+	// tree calls must skip it: keyframed at the reaction end, the severed arm snapped back onto the actor; dynamic
+	// again on the next hit, it floated. So: the root's children one by one, minus that node.
+	template <class F>
+	static void ForEachRagdollTree(RE::NiAVObject* a_root, F&& a_func)
+	{
+		auto* node = a_root ? a_root->IsNode() : nullptr;
+		if (!node || a_root->collisionObject) {
+			a_func(a_root);
+			return;
+		}
+		for (auto& child : node->children) {
+			if (child && child->name != "Severed Limbs"sv) a_func(child.get());
+		}
+	}
+
 	// bhkUtilFunctions::SetMotionType over an object tree; the engine's RagdollStart handler calls it
 	// as (root, kDynamic, 1, 1, 1).
 	void SetTreeMotionType(RE::NiAVObject* a_root, RE::hknpMotionPropertiesId::Preset a_type)
 	{
 		using func_t = bool (*)(RE::NiAVObject*, RE::hknpMotionPropertiesId::Preset, bool, bool, bool);
 		static REL::Relocation<func_t> func{ REL::ID{ 357289, 0, 2277723 } };
-		func(a_root, a_type, true, true, true);
+		ForEachRagdollTree(a_root, [&](RE::NiAVObject* a_tree) { func(a_tree, a_type, true, true, true); });
 	}
 
 
@@ -661,7 +685,7 @@ namespace DynamicRagdollSystem
 	{
 		using func_t = void (*)(RE::NiAVObject*, std::uint32_t);
 		static REL::Relocation<func_t> func{ REL::ID{ 715635, 0, 2278105 } };
-		func(a_root, static_cast<std::uint32_t>(a_layer));
+		ForEachRagdollTree(a_root, [&](RE::NiAVObject* a_tree) { func(a_tree, static_cast<std::uint32_t>(a_layer)); });
 	}
 
 	// bhkCollisionFilter (pointer global ID 469495, 0x1458E0AD8), pair check ID 147831 (0x141D88E60): u64 collide mask

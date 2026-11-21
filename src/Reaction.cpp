@@ -418,6 +418,7 @@ namespace DynamicRagdollSystem
 			ScanBodies(a_stumble, a_actor, npWorld);
 			if (a_stumble.bodies.empty()) return;
 		}
+		UpdateDetached(a_stumble, npWorld);  // also catches the bodies below a pre-cut limb, and limbs this hit cut
 		auto& worldBodies = npWorld->m_bodyManager.m_bodies;
 		struct Sample { const BodyRef* ref; float inverseMass; Vec3 pos; };
 		std::vector<Sample> samples;
@@ -425,7 +426,7 @@ namespace DynamicRagdollSystem
 		float mass = 0.0f;
 		float lowest = std::numeric_limits<float>::max();
 		for (const auto& body : a_stumble.bodies) {
-			if (!FindBody(worldBodies, body)) continue;
+			if (!FindBody(worldBodies, body) || a_stumble.Detached(body.id.m_value)) continue;
 			MotionState motion{};
 			if (!ReadMotionState(npWorld, worldBodies[body.index], motion)) continue;  // not dynamic yet
 			samples.push_back({ &body, motion.inverseMass, BodyPosition(worldBodies[body.index]) });
