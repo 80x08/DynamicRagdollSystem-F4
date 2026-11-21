@@ -126,8 +126,15 @@ namespace DynamicRagdollSystem
 	// Called for every hit before the engine applies it (DoHitMe). Returns true if a reaction was queued.
 	bool QueueReaction(RE::Actor* a_actor, const RE::HitData& a_hit)
 	{
-		if (!a_actor || a_actor->IsPlayerRef() || a_actor->IsDead(false) || a_hit.flags.any(RE::HitData::Flag::kFatal) ||
-			a_hit.totalDamage < kMinDamage) {
+		if (!a_actor || a_actor->IsDead(false) || a_hit.flags.any(RE::HitData::Flag::kFatal)) return false;
+		const bool player = a_actor->IsPlayerRef();
+		if (player && IsPlayerExcluded(a_actor, kPlayerHitReactions, true)) {
+			if (kPlayerHitReactions) LogSkipOnce(a_actor, "hit skipped", "[Player] power armor or not third person");
+			return false;
+		}
+		// Hits on the player are much weaker than the player's own, so it has its own threshold.
+		if (a_hit.totalDamage < (player ? kPlayerMinDamage : kMinDamage)) {
+			if (player) LogSkipOnce(a_actor, "hit skipped", "below [Player] fMinDamage");
 			return false;
 		}
 		if (IsBlacklisted(a_actor, kReactBlacklist)) {
@@ -176,7 +183,9 @@ namespace DynamicRagdollSystem
 
 	void Hook_DoHitMe(RE::Actor* a_actor, RE::HitData* a_hit)
 	{
-		if (a_hit && a_actor && !a_actor->IsPlayerRef() && !a_actor->IsDead(false)) {
+		// The player's hits are recorded too when either [Player] toggle is on (the death reads the last hit).
+		const bool tracked = a_actor && !IsPlayerExcluded(a_actor, kPlayerHitReactions || kPlayerDeath);
+		if (a_hit && tracked && !a_actor->IsDead(false)) {
 			LastHit last{};
 			ReadHitInfo(a_actor, *a_hit, last.dir, last.hitBody);
 			last.explosion = a_hit->flags.any(RE::HitData::Flag::kExplosion);
@@ -190,7 +199,7 @@ namespace DynamicRagdollSystem
 			last.burstStart = sameBurst ? entry.burstStart : last.time;
 			last.burstHits = (sameBurst ? entry.burstHits : 0) + 1;
 			entry = last;
-		} else if (a_hit && a_actor && !a_actor->IsPlayerRef()) {
+		} else if (a_hit && tracked) {
 			// Corpse hit: count it toward finishing off a body in the dying phase (same test as the StepWrithe dispatch).
 			const float now = NowSeconds();
 			std::scoped_lock lock{ g_mutex };
@@ -206,7 +215,7 @@ namespace DynamicRagdollSystem
 					death.dyingDamage += a_hit->totalDamage;
 			}
 		}
-		if (a_hit && a_actor && !a_actor->IsPlayerRef()) LogSkipOnce(a_actor, "hit hook", "first hit seen");
+		if (a_hit && tracked) LogSkipOnce(a_actor, "hit hook", "first hit seen");
 		const bool queued = a_hit && QueueReaction(a_actor, *a_hit);
 		g_doHitMe(a_actor, a_hit);
 		if (a_hit && a_actor) {  // diagnostic: the killing hit's final flags/limb are logged when its death starts
@@ -228,7 +237,7 @@ namespace DynamicRagdollSystem
 		if (a_hit && a_actor) CountKnockdownHit(a_actor, *a_hit);  // Knockdown.cpp
 		// Head dismembered/exploded by this hit (flags read after the engine applied it).
 		using Limb = RE::BGSBodyPartDefs::LIMB_ENUM;
-		if (a_hit && a_actor && !a_actor->IsPlayerRef() &&
+		if (a_hit && tracked &&
 			a_hit->flags.any(RE::HitData::Flag::kDismemberLimb, RE::HitData::Flag::kExplodeLimb)) {
 			const auto limb = a_hit->damageLimb.get();
 			REX::INFO("DynamicRagdollSystem: {:08X} hit {} limb {}"sv, a_actor->GetFormID(),
@@ -583,6 +592,16 @@ namespace DynamicRagdollSystem
 		return (race->HasKeywordID(kHuman) || race->HasKeywordID(kGhoul) || race->HasKeywordID(kFeral) ||
 		           race->HasKeywordID(kMutant)) &&
 		       !race->HasKeywordID(kRobot) && !race->HasKeywordID(kChild);
+	}
+
+	// The player, unless its [Player] toggle is on and it is out of power armor (and, if asked, in third person:
+	// in first person the reacting body is not the one on screen).
+	bool IsPlayerExcluded(RE::Actor* a_actor, bool a_toggle, bool a_thirdPersonOnly)
+	{
+		if (!a_actor->IsPlayerRef()) return false;
+		if (!a_toggle || RE::PowerArmor::ActorInPowerArmor(*a_actor)) return true;
+		const auto* camera = a_thirdPersonOnly ? RE::PlayerCamera::GetSingleton() : nullptr;
+		return a_thirdPersonOnly && (!camera || !camera->QCameraEquals(RE::CameraState::k3rdPerson));
 	}
 
 	// IsDead(false) is also true for a downed essential NPC (companion waiting for a stimpak: lifeState 7, an animated

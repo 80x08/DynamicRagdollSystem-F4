@@ -24,6 +24,9 @@ with these, how long the free hand spends behind the back and how much it moves 
 numbers (both feet up, highest foot, foot behind the pelvis, planted-foot slip), each get-up's stages and time, and
 PASS or FAIL (exit code 0 means PASS). Each death (walk, stagger, stumble) is also shot in the chest from behind: it
 must step, clutch the wound, not be launched and end up down; the walk must still be up at 1.5 s and take 4 steps.
+Then it walks straight ahead up the slope onto the top, over it into the next valley and across the bumps (key T)
+without falling,
+crouches (key C, pelvis within 0.08 of `fSneakHeight`) and raises the rifle (key G, both hands in front of the chest).
 `--head` runs only the head shots, `--arms` only the arm and chest shots.
 `--stumble` (no pass/fail) shoots the puppet, standing and walking, in the chest, head and thigh from all four sides,
 twice, then in the chest from the front, back and left at push scales 0.5, 1, 1.5, 2 and 3, and prints per shot and per
@@ -65,6 +68,18 @@ Killing shot on the body part under the mouse (`src/Death.cpp`; then it goes lim
 Arrow keys walk relative to the camera (`Shift` runs) · `1` knock down (shove along the camera, then it gets up) · `4` weak walker on/off · `3` puppet on/off (off = limp; back on, it gets up from wherever it
 lies, and the top line shows the get-up stage) · `F` push the chest ·
 `R` reset · `P` pause · `N` step one frame while paused · right mouse button orbits · mouse wheel zooms
+- `G` rifle at the ready on/off: the hands are sprung to the assault rifle's ready pose, taken from frame 0 of the
+  game's `GripRifleStraight\WPNIdleReady.hkx` (support hand 0.45 m out under the barrel, trigger hand at the chest),
+  the arms' weight carried by the chest; the drawn rifle has no mass. Released when it dies (the game
+  drops the weapon), so deaths start from that pose.
+- `C` crouch on/off: pelvis at `[Puppet] fSneakHeight` (0.70), trunk leaning `fSneakLean` (13 degrees) forward, both
+  from the game's `SneakWPNWalkForwardReady.hkx` against `WPNWalkForwardReady.hkx`. A left click on a crouched
+  puppet applies the plugin's `bDeathStaggerCrouchStumble` (a rolled stagger becomes the stumble); `W` still forces it.
+- `T` terrain over the whole level (30 x 30 m around the start): flat; slope (15 degrees up and down over 5 m, 1.34 m
+  high, 2 m flat at the bottom and top); stairs (flights of 8 steps of 18 x 30 cm up and down, 2 m landings); uneven
+  (ankle-high bumps and dips, 0 to 14 cm, 0.7 to 3 m across). Slope and stairs run along the start pose's facing, which
+  starts mid-valley; the ragdoll is lifted clear of the ground on reset. The walker can't climb the stairs (see
+  "What does not match the game"); `--test` prints those walks but does not count them.
 
 Colours: orange = trunk held up by the controller, red = the foot currently stepping, dark red = the part that was shot, green = the hand clutching it, yellow dot = the target pelvis
 position, blue rings = where each foot will land.
@@ -117,9 +132,12 @@ Mapping to Jolt:
 - Solver, contact softness, step rate: Jolt is not hknp. Expect gains to carry over roughly, not exactly.
 - Damping and surface friction were never traced in the game. The `[Sim]` defaults are Jolt's own.
 - Inertia comes from the capsules, not the game's values, and cones are pyramids.
-- The floor is flat. In the game the puppet reads the ground height with a ray every frame.
+- Ground: the controllers read it as the plugin does. The walker (arrow keys, death walk: `Walk.cpp`) uses one ray
+  under the trunk; the death stagger adds a ray under each foot (the ankle) and under the step's landing; the stumble
+  shifts its levels by the rays under the feet and the trunk. So, as in the plugin, the walker stalls at the first
+  stair and the stairs cannot be walked.
 - Left out of the deaths: weapon knockback trim, explosions and heavy-hit flings, dismemberment (so no headless
-  walk), crouching, flailing, twitches and the crawl, a walk turning into a stumble when shot again, and the dying
+  walk), flailing, twitches and the crawl, a walk turning into a stumble when shot again, and the dying
   phase.
 - The controllers are ports: `src/Puppet.cpp` of `../src/Walk.cpp` and `../src/DeathStagger.cpp`, `src/Death.cpp` of
   `../src/DeathStumble.cpp`, `../src/Walk.cpp` (`StepDeathWalk`) and `../src/Death.cpp` (grip, brace). When you change

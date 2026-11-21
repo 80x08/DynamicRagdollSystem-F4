@@ -462,6 +462,12 @@ namespace DynamicRagdollSystem
 	constexpr float kStaggerFalling = 0.6f;     // pelvis height (fraction of standing, above the feet) from which the drives fade ...
 	constexpr float kStaggerDown = 0.35f;       // ... to none here: it is down
 	inline bool  kIniHotReload = false;           // [General] bEnableHotReload, read at game start only
+	// [Player]: the player gets hit reactions (third person only) / the mod's death handling only when these are on,
+	// and never in power armor.
+	inline bool  kPlayerHitReactions = false;
+	inline bool  kPlayerDeath = false;
+	inline float kPlayerMinDamage = 3.0f;         // [Reaction] fMinDamage for hits on the player
+	inline float kPlayerHitSoftness = 0.3f;       // [Reaction] fHitSoftness for the player
 	// [Knockdown] living NPCs knocked over by a burst of bullet hits (shotgun pellets) or one heavy hit.
 	inline int   kMultiHitCount = 5;                // hits needed within kMultiHitWindow (0 = off)
 	inline float kMultiHitWindow = 0.05f;           // s from the first hit of a burst
@@ -842,6 +848,9 @@ namespace DynamicRagdollSystem
 	// Actor::KillImpl (vfunc 0x117, OG 0x140DB27B0). With ragdollInstant the engine goes straight to the death
 	// ragdoll (0x140D70010) instead of performing the death action (default object +0x300, death animation).
 	inline REL::THookVFT<void(RE::Actor*, RE::Actor*, float, bool, bool)>* g_killHook = nullptr;
+	// PlayerCharacter overrides slot 0x117 (OG 0x140EBAEE0, AE 0x140D78A30): player bookkeeping, then a direct
+	// (non-virtual) call to Actor::KillImpl, so the Actor hook never sees the player and this one passes ragdollInstant on.
+	inline REL::THookVFT<void(RE::Actor*, RE::Actor*, float, bool, bool)>* g_playerKillHook = nullptr;
 
 
 	// Interiors use bhkWorld; exterior worldspaces use bhkWorldM (own vtable), so both are hooked.
@@ -895,6 +904,7 @@ namespace DynamicRagdollSystem
 	const char* LockedReason(RE::Actor* a_actor);
 	void LogSkipOnce(RE::Actor* a_actor, std::string_view a_where, std::string_view a_why);
 	bool IsHumanoid(RE::Actor* a_actor);
+	bool IsPlayerExcluded(RE::Actor* a_actor, bool a_toggle, bool a_thirdPersonOnly = false);
 	bool IsReallyDead(RE::Actor* a_actor);
 	bool PerformDefaultAction(RE::Actor* a_actor, RE::DEFAULT_OBJECT a_action);
 	void ReplaceDeath(Death&& a_death);

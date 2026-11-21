@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // Port of src/Puppet.cpp's PuppetStep to Jolt. Same algorithm, same g_config.puppet values; the differences are only
 // how bodies are read and pushed. Keep the two in step when changing the controller.
@@ -23,7 +23,9 @@ public:
 	int       hurt{ -1 };  // Stagger: the shot leg's foot (0/1): standing on it alone, it carries only fDeathStaggerHurtLeg of the weight
 	JPH::Vec3 fallDir{};   // Stagger: flat direction the hit sent it (it tips over that way)
 
-	bool weak{ false };  // key 4: soft trunk springs (fWeakSupport); tips past fGiveUpAngle -> falls and gets up
+	bool weak{ false };   // key 4: soft trunk springs (fWeakSupport); tips past fGiveUpAngle -> falls and gets up
+	bool aim{ false };    // key G: the arms hold a rifle at the ready (released when it dies: the game drops the weapon)
+	bool sneak{ false };  // key C: crouched, pelvis at fSneakHeight, trunk leaning fSneakLean forward
 
 	enum class Rise { kNone, kDown, kRoll, kKneel, kLunge, kStand };  // getting up after a fall
 	static const char* RiseName(Rise a_rise);
@@ -73,6 +75,18 @@ private:
 	};
 
 	static constexpr float kFallenHeight = 0.55f, kFallenTilt = 0.5f;  // death walk: pelvis below this fraction of standing / trunk up axis z: fallen
+	static constexpr float kStepMaxRise = 0.5f;  // m: a foot's or a landing's ground further than this from the trunk's is not a step (Common.h)
+	// Key G: hand and elbow springs (as the brace's), and per side where the hand goes from the point between the
+	// shoulders in the facing frame (x right, y forward, z up, m) and which way the elbow points from its shoulder.
+	// From frame 0 of the game's GripRifleStraight\WPNIdleReady.hkx (the assault rifle's ready idle; game units x
+	// 0.0142875). Its torso is turned (bladed stance) and this one is square, hence from between the shoulders: from
+	// each shoulder the rifle pointed sideways.
+	static constexpr float kAimKp = 120.0f, kAimKd = 14.0f, kAimMaxAccel = 300.0f;
+	static constexpr float kAimHand[2][3]{ { 0.051f, 0.447f, -0.110f }, { 0.170f, 0.155f, -0.078f } };  // [0] support (left), [1] trigger (right)
+	static constexpr float kAimElbow[2][3]{ { -0.05f, 0.63f, -0.77f }, { 0.69f, 0.31f, -0.65f } };
+	void      ReadGround(World& a_world);                  // m_ground under the pelvis, m_footGround under each foot, m_landing
+	float     Ground(World& a_world, JPH::Vec3 a_p) const;  // the ground under a point
+	void      HoldArms(World& a_world, JPH::Quat a_frame, float a_dt);  // key G
 	bool      Walk(World& a_world, JPH::Vec3 a_moveVel, float a_dt, float a_turnRate);
 	void      Swing(World& a_world, JPH::Vec3 a_to, float a_time, JPH::Vec3 a_right, float a_dt);  // the swing foot along its arc
 	JPH::Vec3 OwnSide(World& a_world, JPH::Vec3 a_p, int a_foot, JPH::Vec3 a_right) const;        // a_p kept clear of the other foot
@@ -87,7 +101,11 @@ private:
 	std::vector<int>       m_arms;
 	Foot                   m_feet[2];
 	int                    m_head{ -1 };  // highest trunk part
-	float                  m_standHeight{ 1.0f }, m_ground{}, m_time{}, m_swingStart{}, m_landed{ -1.0e9f }, m_swingTime{};
+	float                  m_standHeight{ 1.0f }, m_time{}, m_swingStart{}, m_landed{ -1.0e9f }, m_swingTime{};
+	// Ground, as the plugin's walker (Walker.h): under the trunk, under each foot (kept to within kStepMaxRise of the
+	// trunk's), and under the swing foot's spot of the last frame (the plugin's step ray; m_landingFor = its swing).
+	float                  m_ground{}, m_footGround[2]{}, m_landing{};
+	int                    m_landingFor{ -1 };
 	int                    m_lastSwing{ -1 };
 	JPH::Vec3              m_root{}, m_swingFrom{};
 	// Get-up state.

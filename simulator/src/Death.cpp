@@ -36,7 +36,7 @@ namespace
 	constexpr float kStepTrigger = 0.08f, kStepTime = 0.3f, kStepHeight = 0.2f, kStepMaxLength = 0.45f, kStepMinLength = 0.2f;
 	constexpr float kSwingKneeBend = 50.0f, kKneeMinStiffness = 1.0f, kKneeMinFade = 0.4f, kStepCooldown = 0.12f;
 	constexpr float kSwingKp = 20.0f, kSwingMaxAccel = 120.0f, kGroundTolerance = 0.2f, kBalanceMaxAccel = 40.0f;
-	constexpr float kSupportBase = 0.4f, kSupportFade = 0.4f, kFootFriction = 0.8f, kSinkDepth = 0.25f;
+	constexpr float kSupportBase = 0.4f, kSupportFade = 0.4f, kFootFriction = 0.8f, kSinkDepth = 0.25f, kStepMaxRise = 0.5f;
 	// Death walk (Walker.h): full strength for kWalkHold of the walk, trunk springs fade to kWalkSoft. The rest is in
 	// g_plugin ([DeathWalk]).
 	constexpr float kWalkHold = 0.4f, kWalkSoft = 0.35f;
@@ -90,14 +90,18 @@ const char* Death::KindName(Kind a_kind)
 	}
 }
 
-std::optional<Death::Kind> Death::Roll(World& a_world, int a_hitPart, bool& a_grip)
+std::optional<Death::Kind> Death::Roll(World& a_world, int a_hitPart, bool& a_grip, bool a_crouched)
 {
 	const auto  chance = [](float a_p) { return std::uniform_real_distribution<float>{ 0.0f, 1.0f }(rng) < a_p; };
 	const auto& p = g_plugin;
 	const bool  headless = false;  // no dismemberment in the sim
 	const bool  walk = (!p.walkHeadlessOnly || headless) && chance(p.walkChance);
-	const bool  stagger = !walk && chance(p.staggerChance);
+	bool        stagger = !walk && chance(p.staggerChance);
 	const bool  stumble = stagger || (!walk && chance(p.stumbleChance));
+	if (stagger && p.staggerCrouchStumble && a_crouched) {  // crouched: no standing pose to stagger from; the stumble instead
+		stagger = false;
+		std::printf("death stagger: crouched; stumble instead\n");
+	}
 	a_grip = chance(p.gripChance);
 	const bool  headShot = a_world.Part(a_hitPart).name.find("Head") != std::string::npos;
 	// Rolled first in priority: a skipped head shot neither walks, staggers nor stumbles (a headless-only walk never is).
@@ -166,6 +170,8 @@ void Death::Start(World& a_world, int a_hitPart, Vec3 a_hitDir, float a_pushScal
 	// Height: the lower foot, not the average. Dying mid-stride one foot is in the air.
 	for (int i = 0; i < a_world.PartCount(); ++i)
 		if (m_refs[i].foot) m_feetCaptured.SetZ(std::min(m_feetCaptured.GetZ(), float(bodies.GetPosition(a_world.Body(i)).GetZ())));
+	for (int i = 0; i < a_world.PartCount(); ++i)
+		if (m_refs[i].foot && feetCount) m_groundAtDeath += a_world.GroundZ(m_targetPos[i].GetX(), m_targetPos[i].GetY()) / static_cast<float>(feetCount);
 	const float facing = std::atan2(-hips.GetY(), hips.GetX());  // the way the hips face
 	if (kind == Kind::kStagger) {
 		// The legs and trunk are the walker's (key 4's catch steps).
@@ -411,7 +417,9 @@ void Death::Step(World& a_world, float a_dt)
 	// Strength decays steadily from the moment of death, so the body buckles progressively instead of standing at full
 	// strength and dropping at the end. (The walk drains its own way, StepWalk, and ends here at the same time.)
 	const float fade = std::clamp((m_end - m_now) / std::max(m_end, 0.01f), 0.0f, 1.0f);
-	const float pelvisHeight = float(bodies.GetPosition(a_world.Body(0)).GetZ()) - m_feetCaptured.GetZ();
+	const Vec3  pelvisPos(bodies.GetPosition(a_world.Body(0)));
+	const float trunkLevel = Level(a_world, pelvisPos), groundSurface = a_world.GroundZ(pelvisPos.GetX(), pelvisPos.GetY());
+	const float pelvisHeight = pelvisPos.GetZ() - trunkLevel;
 	// Stagger: going down, the drives fade with height, so it is limp once down, with nothing cut; or when time is up
 	// (strength gone). The walk also ends when it falls (StepWalk), the stumble only when its time is up.
 	const float up = kind == Kind::kStagger && m_hitApplied ? std::clamp((pelvisHeight / m_pelvisHeight - kDown) / (kFalling - kDown), 0.0f, 1.0f) : 1.0f;
@@ -441,8 +449,6 @@ void Death::Step(World& a_world, float a_dt)
 	comVel /= mass;
 	if (kind == Kind::kWalk) return StepWalk(a_world, samples, dt);
 	if (kind == Kind::kStumble) return StepStumble(a_world, samples, trunk, com, comVel, fade, dt);
-	// Flat floor: the plugin's fallback when the ground rays miss (every level is the captured ground).
-	const float rest = m_feetCaptured.GetZ(), groundSurface = rest - 0.1f;
 
 	// Faster than a stumble, or leaning past g_plugin.staggerGiveUpTilt, cannot be caught: the help fades into a natural fall.
 	Vec3 tiltError = RotationError(samples[trunk].rot, m_targetRot[trunk]);
@@ -451,7 +457,7 @@ void Death::Step(World& a_world, float a_dt)
 	const float lean = tiltError.Length();
 	const float upright = std::clamp((g_plugin.staggerGiveUpTilt - lean) / kGiveUpRange, 0.0f, 1.0f);
 	const float catchable = std::clamp(1.0f - (speed - g_plugin.staggerCatchSpeed) / g_plugin.staggerCatchRange, 0.0f, 1.0f) * upright;
-	const float braceLean = com.GetZ() - rest > kBraceGround ? lean : 0.0f;
+	const float braceLean = com.GetZ() - trunkLevel > kBraceGround ? lean : 0.0f;
 
 	// The stagger line (debug view): the way the body moves just after the shot (the shot's push plus whatever it was
 	// already doing, e.g. walking).
@@ -479,6 +485,11 @@ void Death::Step(World& a_world, float a_dt)
 	// 2. Grip: a hand clutches the body part the killing shot hit; the free hands brace for the fall.
 	ApplyGrip(a_world, samples, dt, 1.0f);
 	ApplyBrace(a_world, samples, dt, braceLean, 1.0f, groundSurface);  // no flail in the sim, so full brace scale
+}
+
+float Death::Level(World& a_world, Vec3 a_p) const
+{
+	return m_feetCaptured.GetZ() + a_world.GroundZ(a_p.GetX(), a_p.GetY()) - m_groundAtDeath;
 }
 
 // Death walk (../src/Walk.cpp StepDeathWalk): full strength for the first kWalkHold of the walk, then it drains to nothing;
@@ -529,8 +540,10 @@ void Death::StepStumble(World& a_world, const std::vector<Sample>& a_samples, in
 	auto&         bodies = a_world.Bodies();
 	const float   dt = a_dt, fade = a_fade, gravity = g_sim.gravity;
 	const Vec3    com = a_com, comVel = a_comVel;
-	const float   rest = m_feetCaptured.GetZ(), groundSurface = rest - 0.1f;  // flat floor: every level is the captured ground
 	const Sample& trunk = a_samples[a_trunk];
+	// Ground levels (foot-centre height when standing) from the rays, as shifts from the ground at death.
+	const float rest = m_feetCaptured.GetZ(), trunkLevel = Level(a_world, trunk.pos);
+	const float groundSurface = a_world.GroundZ(trunk.pos.GetX(), trunk.pos.GetY());
 	Vec3          tiltError = RotationError(trunk.rot, m_targetRot[a_trunk]);
 	tiltError.SetZ(0.0f);
 	Vec3        omega = trunk.angVel;
@@ -550,22 +563,27 @@ void Death::StepStumble(World& a_world, const std::vector<Sample>& a_samples, in
 	int           footCount = 0;
 	for (const auto& s : a_samples)
 		if (m_refs[s.part].foot && footCount < 2) foot[footCount++] = &s;
-	Vec3 feet = Vec3::sZero();
-	for (int i = 0; i < footCount; ++i) feet += foot[i]->pos / static_cast<float>(footCount);
+	Vec3  feet = Vec3::sZero();
+	float feetLevel = 0.0f;
+	for (int i = 0; i < footCount; ++i) {
+		feet += foot[i]->pos / static_cast<float>(footCount);
+		feetLevel += Level(a_world, foot[i]->pos) / static_cast<float>(footCount);
+	}
+	if (!footCount) feetLevel = rest;
 	float capturedZ = 0.0f, capturedMass = 0.0f;
-	bool  grounded = false;  // any foot on the ground (two-sided: sunk through is not standing)
+	bool  grounded = false;  // any foot on its own ground (two-sided: sunk through is not standing)
 	for (const auto& s : a_samples) {
 		capturedZ += m_targetPos[s.part].GetZ() * s.mass;
 		capturedMass += s.mass;
-		if (m_refs[s.part].foot && std::abs(s.pos.GetZ() - rest) < kGroundTolerance) grounded = true;
+		if (m_refs[s.part].foot && std::abs(s.pos.GetZ() - Level(a_world, s.pos)) < kGroundTolerance) grounded = true;
 	}
 	const float capturedComZ = capturedZ / capturedMass;
-	const float braceLean = com.GetZ() - rest > kBraceGround ? lean : 0.0f;
+	const float braceLean = com.GetZ() - trunkLevel > kBraceGround ? lean : 0.0f;
 	// The body sinks with the knee buckle instead of being held at standing height (which fought the bend).
 	const float sink = kSinkDepth * std::min(1.0f, 1.5f * (1.0f - fade)) * std::clamp(g_plugin.kneeBend / 80.0f, 0.0f, 1.5f);
 	// Support (gravity cancel + height spring) only while the feet are on the ground; airborne, gravity acts.
 	const float support =
-		grounded ? (kHeightKp * (capturedComZ - sink - com.GetZ()) - kHeightKd * comVel.GetZ() + gravity * m_support) * dt * fade * catchable : 0.0f;
+		grounded ? (kHeightKp * (capturedComZ + (feetLevel - rest) - sink - com.GetZ()) - kHeightKd * comVel.GetZ() + gravity * m_support) * dt * fade * catchable : 0.0f;
 	legs = grounded ? m_support * fade * catchable : 0.0f;
 	const Vec3 dCom(-m_braking * comVel.GetX() * dt * catchable, -m_braking * comVel.GetY() * dt * catchable,
 		grounded ? support : std::min(0.0f, -kHeightKd * comVel.GetZ() * dt));  // airborne: brake the launch only
@@ -610,8 +628,12 @@ void Death::StepStumble(World& a_world, const std::vector<Sample>& a_samples, in
 			m_nextStep = m_now + kStepCooldown;
 		} else {
 			const Sample& swing = a_samples[stepFoot];
-			const Vec3    desiredPos = m_stepFrom + (m_stepTo - m_stepFrom) * phase + Vec3(0.0f, 0.0f, kStepHeight * std::sin(kPi * phase));
-			const Vec3    feedForward = (m_stepTo - m_stepFrom) / m_stepTime;
+			// Land at standing height on the ground under the target, so stairs and slopes are stepped onto. A change too
+			// big to be a step: the start height.
+			Vec3 to = m_stepTo;
+			if (const float level = Level(a_world, m_stepTo); std::abs(level - m_stepFrom.GetZ()) < kStepMaxRise) to.SetZ(level);
+			const Vec3 desiredPos = m_stepFrom + (to - m_stepFrom) * phase + Vec3(0.0f, 0.0f, kStepHeight * std::sin(kPi * phase));
+			const Vec3 feedForward = (to - m_stepFrom) / m_stepTime;
 			Vec3          deltaV = feedForward + (desiredPos - swing.pos) * kSwingKp - swing.vel;
 			const float   n = deltaV.Length(), cap = kSwingMaxAccel * dt;
 			if (std::isfinite(n) && n > 1.0e-4f) {
@@ -635,7 +657,7 @@ void Death::StepStumble(World& a_world, const std::vector<Sample>& a_samples, in
 	// feet (over a ledge) the help fades.
 	std::vector<const Sample*> stance;
 	for (int i = 0; i < footCount; ++i)
-		if (foot[i]->part != stepFoot && std::abs(foot[i]->pos.GetZ() - rest) < kGroundTolerance) stance.push_back(foot[i]);
+		if (foot[i]->part != stepFoot && std::abs(foot[i]->pos.GetZ() - Level(a_world, foot[i]->pos)) < kGroundTolerance) stance.push_back(foot[i]);
 	float overFeet = 0.0f;
 	if (!stance.empty()) {
 		const Vec3  c = Flat(com), a = Flat(stance.front()->pos), b = Flat(stance.back()->pos), ab = b - a;

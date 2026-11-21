@@ -8,8 +8,8 @@
 //   steps, joint servo with knee buckle).
 // Killing push, grip and brace are ported from ../src/Death.cpp (ApplyGrip, ApplyBrace) with its constants, except that
 // the grip aims at the front of the wound.
-// Left out: ground rays (the floor is flat, which is the plugin's no-ray fallback), weapon knockback trim, explosions,
-// dismemberment, flailing while airborne, the roll odds (the key picks the mechanic), the walk turning into a stumble
+// Ground rays are World::GroundZ (they never miss, so the plugin's flat fallback never applies).
+// Left out: weapon knockback trim, explosions, dismemberment, flailing while airborne, the walk turning into a stumble
 // when shot again, and the dying phase after the stumble.
 
 #include "Puppet.h"
@@ -28,7 +28,8 @@ public:
 	// Left click: which death the plugin would roll for a kill shot in a_hitPart (StartPendingDeaths, g_plugin's chances):
 	// the walk (only headless if bDeathWalkHeadlessOnly, and the sim never dismembers), else the stagger, else the
 	// stumble; a head shot may then skip it. None: a plain ragdoll fall. a_grip: rolled fDeathGripChance.
-	static std::optional<Kind> Roll(World& a_world, int a_hitPart, bool& a_grip);
+	// a_crouched (key C): bDeathStaggerCrouchStumble turns a rolled stagger into the stumble.
+	static std::optional<Kind> Roll(World& a_world, int a_hitPart, bool& a_grip, bool a_crouched = false);
 	void  Step(World& a_world, float a_dt);                           // before each physics step while Active()
 	void  Stop() { m_active = false; }
 	bool  Active() const { return m_active; }
@@ -81,6 +82,8 @@ private:
 	JPH::Vec3    m_hitDir{}, m_feetCaptured{}, m_braceFall{};
 	JPH::Vec3    m_line{};  // stagger line: flat direction
 	float        m_now{}, m_end{}, m_tip{}, m_pelvisHeight{ 1.0f }, m_upright{}, m_braking{}, m_braceLevel{};
+	float        m_groundAtDeath{};  // ground under the feet at death (two: their average); levels are shifts from it
+	float        Level(World& a_world, JPH::Vec3 a_p) const;  // standing foot-centre height on the ground under a_p (the plugin's footLevel)
 	bool         m_active{}, m_hitApplied{}, m_gripChosen{}, m_grip{ true };
 	// Death walk: wander direction (game heading), its next change, the zigzag and lurch.
 	float m_heading{}, m_nextTurn{}, m_weavePhase{}, m_weaveRate{}, m_weaveSize{}, m_lurchPhase{};

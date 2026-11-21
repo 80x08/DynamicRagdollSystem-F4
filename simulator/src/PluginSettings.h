@@ -24,6 +24,7 @@ struct PluginSettings
 	// [DeathStagger]
 	float staggerStep = 1.0f, staggerTip[2]{ 0.15f, 0.25f }, staggerSlump = 2.0f, staggerHurtLeg = 0.45f, staggerFlinch = 0.35f;
 	float staggerGiveUpTilt = 1.5f, staggerCatchSpeed = 8.0f, staggerCatchRange = 12.0f, staggerBraking[2]{ 0.2f, 1.0f };
+	bool  staggerCrouchStumble = true;  // crouched (key C) at death: the stumble instead of the stagger
 	// [DeathWalk]
 	float walkTime[2]{ 4.0f, 8.0f }, walkPushScale = 0.3f, walkImpactSupport = 0.9f, walkImpactTime = 0.9f, walkSpeed = 1.3f;
 	float walkTurnRate = 2.5f, walkWeave = 45.0f, walkWeaveTime[2]{ 0.9f, 1.8f }, walkLurch = 0.5f, walkDrift = 60.0f;
@@ -65,6 +66,7 @@ inline std::vector<Lab::Setting> PluginTable(PluginSettings& p)
 		{ "DeathStagger", "fDeathStaggerCatchRange", &p.staggerCatchRange, 0, 20, "" },
 		{ "DeathStagger", "fDeathStaggerBrakingMin", &p.staggerBraking[0], 0, 20, "" },
 		{ "DeathStagger", "fDeathStaggerBrakingMax", &p.staggerBraking[1], 0, 20, "" },
+		{ "DeathStagger", "bDeathStaggerCrouchStumble", nullptr, 0, 1, "", &p.staggerCrouchStumble },
 		{ "DeathWalk", "fDeathWalkChance", &p.walkChance, 0, 1, "" },
 		{ "DeathWalk", "bDeathWalkHeadlessOnly", nullptr, 0, 1, "", &p.walkHeadlessOnly },
 		{ "DeathWalk", "fDeathWalkTimeMin", &p.walkTime[0], 1, 30, "" },

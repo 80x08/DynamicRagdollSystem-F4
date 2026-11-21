@@ -13,6 +13,7 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Ragdoll/Ragdoll.h>
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -53,6 +54,12 @@ struct PartInfo
 class World
 {
 public:
+	// Key T. Everything but the flat floor is a static mesh on top of it, laid out ahead of the dumped pose (a flat pad
+	// around the start, so Reset never spawns into it).
+	enum class Terrain { kFlat, kSlope, kStairs, kUneven, kCount };
+	static const char* TerrainName(Terrain a_terrain);
+	using Tri = std::array<JPH::Vec3, 3>;  // counter-clockwise seen from outside (both Jolt and raylib cull the back)
+
 	World();
 	~World();
 
@@ -60,6 +67,10 @@ public:
 	void Reset();                                                    // ragdoll back to the dumped standing pose
 	void Step(float a_dt);
 	void ApplySettings();                                            // g_sim -> live bodies and solver
+	void SetTerrain(Terrain a_terrain);
+	Terrain                 GetTerrain() const { return m_terrainKind; }
+	const std::vector<Tri>& TerrainTris() const { return m_terrainTris; }
+	float GroundZ(float a_x, float a_y) const;  // height of the floor or terrain under a point (the plugin's ground ray)
 
 	JPH::BodyInterface& Bodies() { return m_system.GetBodyInterface(); }
 	JPH::BodyID         Body(int a_part) const { return m_ragdoll->GetBodyID(a_part); }
@@ -79,7 +90,9 @@ private:
 	std::unique_ptr<JPH::TempAllocatorImpl>                  m_temp;
 	std::unique_ptr<JPH::JobSystemThreadPool>                m_jobs;
 	JPH::PhysicsSystem                                       m_system;
-	JPH::BodyID                                              m_floor;
+	JPH::BodyID                                              m_floor, m_terrain;
+	Terrain                                                  m_terrainKind{ Terrain::kFlat };
+	std::vector<Tri>                                         m_terrainTris;
 	JPH::Ref<JPH::RagdollSettings>                           m_settings;
 	JPH::Ref<JPH::Ragdoll>                                   m_ragdoll;
 	std::vector<PartInfo>                                    m_parts;

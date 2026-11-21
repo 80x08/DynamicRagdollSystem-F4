@@ -301,6 +301,15 @@ namespace DynamicRagdollSystem
 		killHook.Init();
 		killHook.Enable();
 		g_killHook = &killHook;
+		// Only with [Player] bDeath on at game start: otherwise the player's vtable stays untouched (other player mods).
+		if (kPlayerDeath) {
+			static REL::THookVFT<void(RE::Actor*, RE::Actor*, float, bool, bool)> playerKillHook{
+				REL::Offset{ RE::VTABLE::PlayerCharacter[0].offset() }, 0x117, &Hook_KillImpl
+			};
+			playerKillHook.Init();
+			playerKillHook.Enable();
+			g_playerKillHook = &playerKillHook;
+		}
 		REX::INFO("DynamicRagdollSystem: hooks installed"sv);
 	}
 }

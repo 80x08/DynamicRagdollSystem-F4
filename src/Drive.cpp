@@ -130,7 +130,9 @@ namespace DynamicRagdollSystem
 				// and gets wrenched into odd poses; keep it firmer and let it catch up faster.
 				const auto* actor = RE::TESForm::GetFormByID<RE::Actor>(state.formID);
 				const bool attacking = actor && actor->meleeAttackState != 0;
-				const float hitSoftness = actor && RE::PowerArmor::ActorInPowerArmor(*actor) ? kPowerArmorHitSoftness : kHitSoftness;
+				const float hitSoftness = actor && actor->IsPlayerRef()                     ? kPlayerHitSoftness :
+				                          actor && RE::PowerArmor::ActorInPowerArmor(*actor) ? kPowerArmorHitSoftness :
+				                                                                               kHitSoftness;
 				const float softness = attacking ? std::max(hitSoftness, kAttackSoftness) : hitSoftness;
 				const float stiffness = state.burning ? kBurnStiffness * (1.0f - 0.6f * state.burnProgress) :
 				                                        softness + (1.0f - softness) * smooth;

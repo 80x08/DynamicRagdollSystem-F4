@@ -9,6 +9,7 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
@@ -53,6 +54,130 @@ namespace
 	}
 
 	float SignedAngle(Vec3 a_from, Vec3 a_to, Vec3 a_axis) { return std::atan2(a_from.Cross(a_to).Dot(a_axis), a_from.Dot(a_to)); }
+
+	float Smooth(float a_t)
+	{
+		a_t = std::clamp(a_t, 0.0f, 1.0f);
+		return a_t * a_t * (3.0f - 2.0f * a_t);
+	}
+
+	// Two triangles, a-b-c-d counter-clockwise seen from outside. Zero-area ones (a side edge on the floor) are dropped.
+	void Quad(std::vector<World::Tri>& a_out, Vec3 a_a, Vec3 a_b, Vec3 a_c, Vec3 a_d)
+	{
+		for (const World::Tri& t : { World::Tri{ a_a, a_b, a_c }, World::Tri{ a_a, a_c, a_d } })
+			if ((t[1] - t[0]).Cross(t[2] - t[0]).LengthSq() > 1.0e-10f) a_out.push_back(t);
+	}
+
+	// A solid on the floor: a profile (forward y, height z; starting and ending at z = 0, vertical segments allowed)
+	// swept across x = [-a_half, a_half], with both sides closed. Facing frame: x right, y forward.
+	void Extrude(std::vector<World::Tri>& a_out, const std::vector<std::pair<float, float>>& a_profile, float a_half)
+	{
+		for (size_t i = 0; i + 1 < a_profile.size(); ++i) {
+			const auto [y0, z0] = a_profile[i];
+			const auto [y1, z1] = a_profile[i + 1];
+			// Across: normal (0, -dz, dy), so treads face up, risers back toward the start, the far end away.
+			Quad(a_out, { -a_half, y0, z0 }, { a_half, y0, z0 }, { a_half, y1, z1 }, { -a_half, y1, z1 });
+			Quad(a_out, { a_half, y0, 0 }, { a_half, y1, 0 }, { a_half, y1, z1 }, { a_half, y0, z0 });          // right side
+			Quad(a_out, { -a_half, y0, 0 }, { -a_half, y0, z0 }, { -a_half, y1, z1 }, { -a_half, y1, 0 });      // left side
+		}
+	}
+
+	std::vector<World::Tri> BuildTerrain(World::Terrain a_terrain)
+	{
+		// The whole level (kLevel either way from the start), laid out along the facing direction. Slope and stairs repeat
+		// up and down (a valley, a rise, a top, a fall), with the start in the middle of a valley floor.
+		std::vector<World::Tri> tris;
+		constexpr float kLevel = 15.0f, kFlat = 2.0f;  // m: half the level's size; length of each valley floor and top
+		// One period as moves (forward, up) repeated over the level; it starts and ends on the valley floor.
+		const auto repeat = [&](const std::vector<std::pair<float, float>>& a_period) {
+			float length = 0.0f;
+			for (const auto& m : a_period) length += m.first;
+			float y = -0.5f * kFlat - 2.0f * length, z = 0.0f;  // the start is mid-valley
+			std::vector<std::pair<float, float>> profile{ { y, z } };
+			while (y < kLevel)
+				for (const auto& [dy, dz] : a_period) profile.push_back({ y += dy, z += dz });
+			Extrude(tris, profile, kLevel);
+		};
+		switch (a_terrain) {
+		case World::Terrain::kSlope: {  // 15 degrees up and down over 5 m (1.34 m high)
+			const float rise = 5.0f * std::tan(15.0f * std::numbers::pi_v<float> / 180.0f);
+			repeat({ { kFlat, 0.0f }, { 5.0f, rise }, { kFlat, 0.0f }, { 5.0f, -rise } });
+			break;
+		}
+		case World::Terrain::kStairs: {  // flights of 8 steps of 0.18 m rise, 0.30 m run (a building's stairs), up and down
+			std::vector<std::pair<float, float>> period{ { kFlat, 0.0f } };
+			for (int k = 0; k < 8; ++k) period.insert(period.end(), { { 0.0f, 0.18f }, { 0.30f, 0.0f } });
+			period.push_back({ kFlat, 0.0f });
+			for (int k = 0; k < 8; ++k) period.insert(period.end(), { { 0.0f, -0.18f }, { 0.30f, 0.0f } });
+			repeat(period);
+			break;
+		}
+		case World::Terrain::kUneven: {  // ankle-high bumps and dips (0 to 0.14 m), from 0.7 to 3 m across, everywhere
+			constexpr float kCell = 0.2f, kBump = 0.07f;
+			const auto height = [&](float x, float y) {
+				const float n = std::sin(1.9f * x + 0.4f) * std::cos(1.7f * y) + 0.6f * std::sin(3.1f * x + 2.3f * y) +
+				                0.45f * std::cos(4.3f * y - 2.9f * x) + 0.3f * std::sin(6.1f * x - 5.3f * y + 1.1f);
+				return kBump * (n / 2.35f + 1.0f) * Smooth(kLevel - std::max(std::abs(x), std::abs(y)));  // down to the floor at the edge
+			};
+			const int cells = static_cast<int>(2.0f * kLevel / kCell);
+			for (int i = 0; i < cells; ++i)
+				for (int j = 0; j < cells; ++j) {
+					const float x0 = -kLevel + i * kCell, y0 = -kLevel + j * kCell, x1 = x0 + kCell, y1 = y0 + kCell;
+					Quad(tris, { x0, y0, height(x0, y0) }, { x1, y0, height(x1, y0) }, { x1, y1, height(x1, y1) }, { x0, y1, height(x0, y1) });
+				}
+			break;
+		}
+		default: break;
+		}
+		return tris;
+	}
+}
+
+const char* World::TerrainName(Terrain a_terrain)
+{
+	switch (a_terrain) {
+	case Terrain::kSlope: return "slope";
+	case Terrain::kStairs: return "stairs";
+	case Terrain::kUneven: return "uneven";
+	default: return "flat";
+	}
+}
+
+void World::SetTerrain(Terrain a_terrain)
+{
+	if (!m_terrain.IsInvalid()) {
+		Bodies().RemoveBody(m_terrain);
+		Bodies().DestroyBody(m_terrain);
+		m_terrain = {};
+	}
+	m_terrainKind = a_terrain;
+	m_terrainTris = BuildTerrain(a_terrain);
+	const Quat facing = Quat::sRotation(Vec3::sAxisZ(), -m_startYaw);  // local +y = the way the dumped pose faces
+	TriangleList list;
+	for (auto& t : m_terrainTris) {
+		for (auto& v : t) v = facing * v;
+		list.push_back(Triangle(Float3(t[0].GetX(), t[0].GetY(), t[0].GetZ()), Float3(t[1].GetX(), t[1].GetY(), t[1].GetZ()),
+			Float3(t[2].GetX(), t[2].GetY(), t[2].GetZ())));
+	}
+	if (list.empty()) return;
+	const auto shape = MeshShapeSettings(list).Create();
+	if (shape.HasError()) {
+		std::printf("terrain: %s\n", shape.GetError().c_str());
+		m_terrainTris.clear();
+		return;
+	}
+	BodyCreationSettings body(shape.Get(), RVec3::sZero(), Quat::sIdentity(), EMotionType::Static, kStatic);
+	body.mFriction = g_sim.friction;
+	m_terrain = Bodies().CreateAndAddBody(body, EActivation::DontActivate);
+}
+
+float World::GroundZ(float a_x, float a_y) const
+{
+	constexpr float kTop = 20.0f, kDepth = 30.0f;
+	RayCastResult   hit;
+	if (!m_system.GetNarrowPhaseQuery().CastRay(RRayCast(RVec3(a_x, a_y, kTop), Vec3(0, 0, -kDepth)), hit, {}, SpecifiedObjectLayerFilter(kStatic)))
+		return 0.0f;
+	return kTop - kDepth * hit.mFraction;
 }
 
 bool World::InitJolt()
@@ -85,6 +210,10 @@ World::~World()
 {
 	if (m_ragdoll) m_ragdoll->RemoveFromPhysicsSystem();
 	m_ragdoll = nullptr;
+	if (!m_terrain.IsInvalid()) {
+		Bodies().RemoveBody(m_terrain);
+		Bodies().DestroyBody(m_terrain);
+	}
 	Bodies().RemoveBody(m_floor);
 	Bodies().DestroyBody(m_floor);
 }
@@ -234,6 +363,15 @@ void World::Reset()
 	if (m_ragdoll) m_ragdoll->RemoveFromPhysicsSystem();
 	m_ragdoll = m_settings->CreateRagdoll(0, 0, &m_system);
 	m_ragdoll->AddToPhysicsSystem(EActivation::Activate);
+	// Lifted clear of the terrain under it (bumps under a foot).
+	float lift = 0.0f;
+	for (int i = 0; i < PartCount(); ++i) {
+		const auto t = Bodies().GetWorldTransform(Body(i));
+		for (const Vec3 end : { Vec3(t * m_parts[i].a), Vec3(t * m_parts[i].b) })
+			lift = std::max(lift, GroundZ(end.GetX(), end.GetY()) + m_parts[i].radius + 0.005f - end.GetZ());
+	}
+	for (int i = 0; lift > 0.0f && i < PartCount(); ++i)
+		Bodies().SetPosition(Body(i), Bodies().GetPosition(Body(i)) + RVec3(0, 0, lift), EActivation::Activate);
 	ApplySettings();
 }
 
@@ -245,6 +383,7 @@ void World::ApplySettings()
 	physics.mNumPositionSteps = static_cast<uint>(g_sim.positionSteps);
 	m_system.SetPhysicsSettings(physics);
 	Bodies().SetFriction(m_floor, g_sim.friction);
+	if (!m_terrain.IsInvalid()) Bodies().SetFriction(m_terrain, g_sim.friction);
 	if (!m_ragdoll) return;
 	for (int i = 0; i < PartCount(); ++i) {
 		BodyLockWrite lock(m_system.GetBodyLockInterface(), Body(i));
@@ -265,7 +404,7 @@ void World::Step(float a_dt)
 int World::Pick(Vec3 a_from, Vec3 a_dir) const
 {
 	RayCastResult hit;
-	if (!m_system.GetNarrowPhaseQuery().CastRay(RRayCast(RVec3(a_from), a_dir * 100.0f), hit, {}, {}, IgnoreSingleBodyFilter(m_floor))) return -1;
+	if (!m_system.GetNarrowPhaseQuery().CastRay(RRayCast(RVec3(a_from), a_dir * 100.0f), hit, {}, SpecifiedObjectLayerFilter(kMoving))) return -1;
 	for (int i = 0; i < PartCount(); ++i)
 		if (Body(i) == hit.mBodyID) return i;
 	return -1;

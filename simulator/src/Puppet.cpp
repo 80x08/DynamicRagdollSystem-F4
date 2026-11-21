@@ -89,6 +89,10 @@ bool Puppet::Capture(World& a_world, float a_yaw)
 		return false;
 	}
 	const Vec3 p = Vec3(bodies.GetPosition(a_world.Body(pelvis)));
+	// The ground at death, as the plugin's Setup: the average of the rays under the two feet. Every foot's height is
+	// measured from it.
+	m_ground = 0.5f * (Ground(a_world, Vec3(bodies.GetPosition(a_world.Body(feet[0])))) + Ground(a_world, Vec3(bodies.GetPosition(a_world.Body(feet[1])))));
+	m_footGround[0] = m_footGround[1] = m_landing = m_ground;
 	m_standHeight = std::clamp(p.GetZ() - m_ground, 0.5f, 1.5f);
 	m_root = p;
 	for (int i = 0; i < a_world.PartCount(); ++i) {
@@ -167,24 +171,90 @@ void Puppet::KnockDown()
 	m_stageStart = m_time;
 }
 
+float Puppet::Ground(World& a_world, Vec3 a_p) const { return a_world.GroundZ(a_p.GetX(), a_p.GetY()); }
+
+void Puppet::ReadGround(World& a_world)
+{
+	const auto pos = [&](int a_part) { return Vec3(a_world.Bodies().GetPosition(a_world.Body(a_part))); };
+	m_ground = Ground(a_world, pos(m_trunk[0].part));
+	for (int i = 0; i < 2; ++i) {  // the plugin's foot ray: under the foot body (the ankle)
+		const float g = Ground(a_world, pos(m_feet[i].part));
+		m_footGround[i] = std::abs(g - m_ground) < kStepMaxRise ? g : m_ground;
+	}
+	// The step ray: under the spot the swing foot was sent to last frame. Too high or low to be a step: its own ground.
+	const bool cast = swing >= 0 && m_landingFor == swing;
+	const float land = cast ? Ground(a_world, spot[swing]) : 0.0f;
+	m_landing = cast && std::abs(land - m_footGround[swing]) < kStepMaxRise ? land : m_footGround[std::max(swing, 0)];
+}
+
+// Key G: each arm's hand and elbow sprung to a rifle-ready pose from its shoulder, the arm's weight carried, all paid
+// by the chest like the arm's own muscles (as the brace).
+void Puppet::HoldArms(World& a_world, Quat a_frame, float a_dt)
+{
+	auto&      bodies = a_world.Bodies();
+	const auto pos = [&](int a_part) { return Vec3(bodies.GetPosition(a_world.Body(a_part))); };
+	int        chest = -1, shoulder[2]{ -1, -1 }, elbow[2]{ -1, -1 }, hand[2]{ -1, -1 };
+	for (int i = 0; i < a_world.PartCount(); ++i) {
+		const auto name = Lower(a_world.Part(i).name);
+		if (name == "chest") chest = i;
+		const int side = name[0] == 'r' ? 1 : name[0] == 'l' ? 0 : -1;
+		if (side < 0 || !Has(name, { "arm" })) continue;
+		if (Has(name, { "upper" })) shoulder[side] = i;
+		else if (Has(name, { "fore" })) elbow[side] = i;
+		else if (Has(name, { "hand" })) hand[side] = i;
+	}
+	if (chest < 0) return;
+	const Vec3 chestVel = bodies.GetLinearVelocity(a_world.Body(chest));
+	Vec3       reaction = Vec3::sZero();
+	const auto drive = [&](int a_part, Vec3 a_target, float a_mass) {
+		const auto id = a_world.Body(a_part);
+		Vec3       dv = ((a_target - pos(a_part)) * kAimKp - (Vec3(bodies.GetLinearVelocity(id)) - chestVel) * kAimKd) * a_dt;
+		dv = Clamp(dv, kAimMaxAccel * a_dt);
+		bodies.AddImpulse(id, dv * a_mass);
+		reaction -= dv * a_mass;
+	};
+	if (shoulder[0] < 0 || shoulder[1] < 0) return;
+	const Vec3 between = 0.5f * (pos(shoulder[0]) + pos(shoulder[1]));
+	for (int side = 0; side < 2; ++side) {
+		if (elbow[side] < 0 || hand[side] < 0) continue;
+		float armMass = 0.0f;
+		for (const int p : { shoulder[side], elbow[side], hand[side] }) {
+			const Vec3 lift(0.0f, 0.0f, g_sim.gravity * a_world.Part(p).mass * a_dt);
+			bodies.AddImpulse(a_world.Body(p), lift);
+			reaction -= lift;
+			armMass += a_world.Part(p).mass;
+		}
+		const Vec3  from = pos(shoulder[side]);
+		const float upper = (pos(elbow[side]) - from).Length();
+		const auto& h = kAimHand[side];
+		const auto& e = kAimElbow[side];
+		drive(hand[side], between + a_frame * Vec3(h[0], h[1], h[2]), 0.5f * armMass);
+		drive(elbow[side], from + (a_frame * Vec3(e[0], e[1], e[2])).Normalized() * upper, 0.5f * armMass);
+	}
+	bodies.AddImpulse(a_world.Body(chest), reaction);
+}
+
 void Puppet::Step(World& a_world, Vec3 a_moveVel, float a_dt)
 {
 	if (m_trunk.empty() || a_dt <= 0.0f) return;
 	m_time += a_dt;
 	++steps;
 	m_strength = m_stiffness = m_support = 1.0f;
+	ReadGround(a_world);
 	if (!GetUp(a_world, a_dt)) {
 		m_strength = 1.0f;
 		// Springs and damping both: a soft trunk is loosely damped too. Just up from a fall it starts firm and softens.
 		const float firm = Smooth((m_time - m_upAt) / kRegainTime);
 		m_stiffness = weak ? 1.0f + (Lab::g_config.puppet.weakSupport - 1.0f) * firm : 1.0f;
 		Walk(a_world, a_moveVel, a_dt, Lab::g_config.puppet.turnRate);
+		if (aim) HoldArms(a_world, sneak ? Pitched(yaw, Lab::g_config.puppet.sneakLean * std::numbers::pi_v<float> / 180.0f) : Facing(yaw), a_dt);
 	}
 }
 
 bool Puppet::DeathWalk(World& a_world, Vec3 a_moveVel, float a_strength, float a_support, float a_stiffness, float a_turnRate, float a_dt)
 {
 	if (m_trunk.empty() || a_dt <= 0.0f) return false;
+	ReadGround(a_world);
 	const float height = float(a_world.Bodies().GetPosition(a_world.Body(m_trunk[0].part)).GetZ()) - m_ground;
 	if (height < kFallenHeight * m_standHeight || (BodyFrame(a_world) * Vec3::sAxisZ()).GetZ() < kFallenTilt) return false;
 	m_time += a_dt;
@@ -201,7 +271,8 @@ bool Puppet::OnGround(World& a_world, int a_part) const
 {
 	const auto& part = a_world.Part(a_part);
 	const auto  t = a_world.Bodies().GetWorldTransform(a_world.Body(a_part));
-	return std::min(Vec3(t * part.a).GetZ(), Vec3(t * part.b).GetZ()) - part.radius < m_ground + kContact;
+	const Vec3  a(t * part.a), b(t * part.b);
+	return std::min(a.GetZ() - Ground(a_world, a), b.GetZ() - Ground(a_world, b)) - part.radius < kContact;
 }
 
 Quat Puppet::BodyFrame(World& a_world) const
@@ -303,10 +374,14 @@ bool Puppet::Walk(World& a_world, Vec3 a_moveVel, float a_dt, float a_turnRate)
 	}
 	const Quat facing = Facing(yaw);
 	const Vec3 right = facing * Vec3::sAxisX();
+	// Key C: crouched, the trunk leans forward and the pelvis tops out at fSneakHeight.
+	const Quat  frame = sneak ? Pitched(yaw, cfg.sneakLean * std::numbers::pi_v<float> / 180.0f) : facing;
+	const float top = m_standHeight * (sneak ? cfg.sneakHeight : 1.0f);
 	// Pelvis height rides over the planted legs like an inverted pendulum: as high as a nearly straight leg reaches from
 	// each planted foot, never above standing and never below fCrouch. A fixed height can't walk: straight legs can't
-	// reach forward, and bent ones use up the hip's swing range (FO4's hip flexes only ~45 degrees).
-	const float lowest = m_standHeight * cfg.crouch;
+	// reach forward, and bent ones use up the hip's swing range (FO4's hip flexes only ~45 degrees). As the plugin's
+	// Walk.cpp: every height is above the trunk's ground (no per-foot rays).
+	const float lowest = top * cfg.crouch;
 	const auto  legOf = [&](int a_foot) { return kStraight * m_feet[a_foot].leg; };
 	const auto  reachAt = [&](int a_foot, float a_height) {  // horizontal reach of a planted foot's hip at a pelvis height
 		const float leg = legOf(a_foot), drop = a_height - m_feet[a_foot].offset.GetZ();
@@ -319,7 +394,7 @@ bool Puppet::Walk(World& a_world, Vec3 a_moveVel, float a_dt, float a_turnRate)
 	m_root += a_moveVel * a_dt;
 	m_root = Flat(pelvisPos) + Clamp(Flat(m_root - pelvisPos), cfg.leash);
 	// The body can't run ahead of its feet: the pelvis stays within a leg's reach of every planted foot.
-	float height = m_standHeight;
+	float height = top;
 	for (int i = 0; i < 2; ++i) {
 		if (i == swing || !down[i]) continue;
 		const Vec3 anchor = anchorOf(i);
@@ -353,11 +428,11 @@ bool Puppet::Walk(World& a_world, Vec3 a_moveVel, float a_dt, float a_turnRate)
 	for (int i = 0; i < 2; ++i) {
 		const Vec3& o = m_feet[i].offset;
 		spot[i] = base + facing * Vec3(o.GetX(), o.GetY(), 0.0f) + a_moveVel * (cfg.stepTime * cfg.stepLead) + lean * kCatchStep;
-		spot[i].SetZ(m_ground + o.GetZ());
 		// No further from the hip than the leg reaches once the pelvis has come down to its lowest.
 		const Vec3 hip = Flat(pelvisPos) + right * o.GetX();
 		const Vec3 reach = Clamp(Flat(spot[i]) - hip, reachAt(i, lowest));
-		spot[i] = OwnSide(a_world, Vec3(hip.GetX() + reach.GetX(), hip.GetY() + reach.GetY(), spot[i].GetZ()), i, right);
+		spot[i] = OwnSide(a_world, Vec3(hip.GetX() + reach.GetX(), hip.GetY() + reach.GetY(), 0.0f), i, right);
+		spot[i].SetZ(m_ground + o.GetZ());
 		off[i] = Flat(spot[i] - pos(m_feet[i].part)).Length();
 	}
 	// A swing ends when its time is up and the foot is down; a step starts only while the other foot stands.
@@ -403,7 +478,7 @@ bool Puppet::Walk(World& a_world, Vec3 a_moveVel, float a_dt, float a_turnRate)
 		const float along = ab.LengthSq() > 1.0e-6f ? std::clamp((com - a).Dot(ab) / ab.LengthSq(), 0.0f, 1.0f) : 0.0f;
 		m_support = 1.0f - Smooth(((com - (a + ab * along)).Length() - kBalanced) / kToppled);  // distance off the feet
 	}
-	Brace(a_world, HoldTrunk(a_world, base, facing, rootVel, a_dt), planted, a_dt);
+	Brace(a_world, HoldTrunk(a_world, base, frame, rootVel, a_dt), planted, a_dt);
 	const float hold = std::min(1.0f, cfg.stanceHold * a_dt);
 	for (int i = 0; i < 2; ++i) {
 		if (i == swing || !down[i]) continue;
@@ -464,6 +539,7 @@ bool Puppet::Stagger(World& a_world, float a_strength, float a_legs, float a_sti
 	const auto  pos = [&](int a_part) { return Vec3(bodies.GetPosition(a_world.Body(a_part))); };
 	if (m_trunk.empty() || a_dt <= 0.0f) return false;
 	m_time += a_dt;
+	ReadGround(a_world);
 	m_strength = a_strength;
 	m_stiffness = a_stiffness;
 	const Vec3 ahead = Flat(BodyFrame(a_world) * Vec3::sAxisY());  // the trunk faces where the pelvis now faces
@@ -491,7 +567,7 @@ bool Puppet::Stagger(World& a_world, float a_strength, float a_legs, float a_sti
 	Vec3 foot[2]{};
 	for (int i = 0; i < 2; ++i) {
 		foot[i] = pos(m_feet[i].part);
-		down[i] = foot[i].GetZ() - (m_ground + m_feet[i].offset.GetZ()) < kContact;
+		down[i] = foot[i].GetZ() - (m_footGround[i] + m_feet[i].offset.GetZ()) < kContact;
 		foot[i] = Flat(foot[i]);
 	}
 	// A step is over once the foot is down and its time is up, or once the other foot has left the ground (rolled off
@@ -514,9 +590,10 @@ bool Puppet::Stagger(World& a_world, float a_strength, float a_legs, float a_sti
 		Vec3        to = from + (capture - from) * std::exp(omega * a_left) + right * f.offset.GetX();
 		to = start + Clamp(to - start, g_plugin.staggerStep * a_strength * (1.0f + 0.5f * speed));  // faster: longer (to the leg's reach)
 		const Vec3  hip = pelvis + Flat(vel) * a_left + right * f.offset.GetX();
-		const float drop = reachHeight - f.offset.GetZ(), leg = kStraight * f.leg;
+		const float land = a_foot == swing ? m_landing : m_footGround[a_foot];
+		const float drop = m_ground + reachHeight - (land + f.offset.GetZ()), leg = kStraight * f.leg;
 		to = hip + Clamp(to - hip, std::sqrt(std::max(0.0f, leg * leg - drop * drop)));
-		to.SetZ(m_ground + f.offset.GetZ());
+		to.SetZ(land + f.offset.GetZ());
 		return OwnSide(a_world, to, a_foot, right);
 	};
 	// A step starts when the capture point leaves the feet, or at once for a foot the hit kicked up. Otherwise a foot left
@@ -544,6 +621,8 @@ bool Puppet::Stagger(World& a_world, float a_strength, float a_legs, float a_sti
 			m_swingStart = m_time;
 			m_swingTime = cfg.stepTime / ((1.0f + 0.5f * speed) * (0.5f + 0.5f * a_strength));  // quicker when moving fast, slower when weak
 			m_swingFrom = pos(m_feet[pick].part);
+			m_landingFor = -1;  // the step ray is cast for the new spot next frame
+			m_landing = m_footGround[pick];
 		}
 	}
 	std::vector<int> planted;
@@ -561,13 +640,14 @@ bool Puppet::Stagger(World& a_world, float a_strength, float a_legs, float a_sti
 		const bool left = sinking && down[i] && (foot[i] - pelvis - right * m_feet[i].offset.GetX()).Length() > kStaggerFar;
 		if (i == swing || !(shot || left)) continue;
 		Vec3 ankle = left ? 0.5f * (foot[i] + pelvis + right * m_feet[i].offset.GetX()) : foot[i];  // a far one is drawn in, or it lifts straight
-		ankle.SetZ(m_ground + m_feet[i].offset.GetZ() + kHurtLift);
+		ankle.SetZ(m_footGround[i] + m_feet[i].offset.GetZ() + kHurtLift);
 		bodies.AddImpulse(a_world.Body(m_trunk[0].part), -DriveLeg(a_world, i, ankle, Vec3::sAxisZ().Cross(right), a_dt));
 	}
 	if (swing >= 0) {
 		// Sped up if the body has: the step that starts with the hit is timed before the hit's push lands.
 		m_swingTime = std::min(m_swingTime, cfg.stepTime / ((1.0f + 0.5f * speed) * (0.5f + 0.5f * a_strength)));
 		spot[swing] = spotFor(swing, std::max(0.0f, m_swingTime - (m_time - m_swingStart)));
+		m_landingFor = swing;
 		Swing(a_world, spot[swing], m_swingTime, right, a_dt);
 	}
 
@@ -583,7 +663,7 @@ bool Puppet::Stagger(World& a_world, float a_strength, float a_legs, float a_sti
 	for (int i = 0; i < 2; ++i) {
 		if (i == swing || !down[i]) continue;
 		const float d = (pelvis - foot[i] + right * m_feet[i].offset.GetX()).Length(), leg = kStraight * m_feet[i].leg;
-		reach = std::min(reach, m_feet[i].offset.GetZ() + std::sqrt(std::max(0.0f, leg * leg - d * d)));
+		reach = std::min(reach, m_footGround[i] - m_ground + m_feet[i].offset.GetZ() + std::sqrt(std::max(0.0f, leg * leg - d * d)));
 	}
 	const float buckled = m_standHeight * kBuckled;
 	base = Vec3(pelvis.GetX(), pelvis.GetY(), m_ground + buckled + (std::max(reach, lowest) - buckled) * a_legs);
@@ -675,16 +755,18 @@ bool Puppet::GetUp(World& a_world, float a_dt)
 		// Hands go down beside the chest: where each shoulder lies once face down (also from a roll that stopped on the side).
 		const Vec3 back = Facing(m_riseYaw) * Vec3::sAxisY() * 0.1f;
 		for (const int a : m_arms)
-			if (Has(Lower(a_world.Part(a).name), { "upper" }))
-				m_hands[Lower(a_world.Part(a).name)[0] == 'r'] = Flat(pelvis + Pitched(m_riseYaw, kHalfPi) * (frame.Conjugated() * (pos(a) - pelvis))) - back +
-				                                                Vec3(0, 0, m_ground);
+			if (Has(Lower(a_world.Part(a).name), { "upper" })) {
+				Vec3 hand = Flat(pelvis + Pitched(m_riseYaw, kHalfPi) * (frame.Conjugated() * (pos(a) - pelvis))) - back;
+				hand.SetZ(Ground(a_world, hand));
+				m_hands[Lower(a_world.Part(a).name)[0] == 'r'] = hand;
+			}
 		begin(Rise::kKneel);
 	};
 	// Kneeling up: the knee-to-hip angle above the floor a_t into a rise lasting a_time, and the hips at that angle.
 	const auto kneelAngle = [&](float a_t, float a_time) { return Smooth(a_t / a_time) * kHalfPi; };
 	const auto kneelHips = [&](float a_theta) {
 		Vec3 hips = m_pivot + (fwd * std::cos(a_theta) + Vec3::sAxisZ() * std::sin(a_theta)) * thigh;
-		hips.SetZ(hips.GetZ() + m_ground + kneeRadius);
+		hips.SetZ(hips.GetZ() + Ground(a_world, m_pivot) + kneeRadius);
 		return hips;
 	};
 	// A foot swung along a lifted arc (as in walking), its push taken from the pelvis.
@@ -814,7 +896,7 @@ bool Puppet::GetUp(World& a_world, float a_dt)
 		const auto& f = m_feet[m_front];
 		const float phase = std::min(1.0f, stage / kLungeTime);
 		Vec3        to = m_pivot + fwd * kLungeReach + right * f.offset.GetX();
-		to.SetZ(m_ground + f.offset.GetZ());
+		to.SetZ(Ground(a_world, to) + f.offset.GetZ());
 		swingFoot(m_front, to, phase);
 		// As the foot comes down, the hand on its side goes to its knee, ready to push on it.
 		const Vec3 knee = pos(f.calf);
@@ -834,7 +916,7 @@ bool Puppet::GetUp(World& a_world, float a_dt)
 		const auto& front = m_feet[m_front];
 		const auto& back = m_feet[1 - m_front];
 		Vec3        over = Flat(pos(front.part)) - right * front.offset.GetX() - fwd * front.offset.GetY();
-		over.SetZ(m_ground + m_standHeight * cfg.crouch);
+		over.SetZ(Ground(a_world, over) + m_standHeight * cfg.crouch);
 		const Vec3 knee = pos(front.calf);
 		Vec3       reaction = moveArms([&](Vec3 a_shoulder, int a_side) {  // pushing on the front knee for the first part
 			return stage < 0.4f * kStandTime && (a_shoulder - pelvis).Dot(right) * front.offset.GetX() > 0.0f ? (knee - a_shoulder).Normalized() :
@@ -844,7 +926,7 @@ bool Puppet::GetUp(World& a_world, float a_dt)
 			const float phase = std::min(1.0f, (stage / kStandTime - 0.4f) / 0.6f);
 			if (m_swingFrom.GetZ() > 1.0e8f) m_swingFrom = pos(back.part);
 			Vec3 to = over + right * back.offset.GetX() + fwd * back.offset.GetY();
-			to.SetZ(m_ground + back.offset.GetZ());
+			to.SetZ(Ground(a_world, to) + back.offset.GetZ());
 			swingFoot(1 - m_front, to, phase);
 		} else {
 			m_swingFrom = Vec3::sReplicate(1.0e9f);  // set when the back foot starts

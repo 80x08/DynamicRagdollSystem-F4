@@ -205,6 +205,67 @@ int Test(World& a_world, Puppet& a_puppet)
 	return up && gait && rose && smooth ? 0 : 2;
 }
 
+// Keys T, C, G. Walks straight ahead on each terrain without falling: up the slope onto the top (1.34 m up), over it
+// down into the next valley, and across the bumps. The stairs (up, and over the top and down) are printed, not checked:
+// like the plugin's, the walker reads one ground height under the trunk and stalls at the first stair. Crouched, the
+// pelvis must settle near fSneakHeight; with the rifle up, both hands must be well in front of the chest. Leaves the
+// floor flat.
+int TerrainTest(World& a_world, Puppet& a_puppet)
+{
+	const float dt = 1.0f / 60.0f;
+	const auto  pos = [&](int a_part) { return JPH::Vec3(a_world.Bodies().GetPosition(a_world.Body(a_part))); };
+	const auto  restart = [&](World::Terrain a_terrain) {
+		a_world.SetTerrain(a_terrain);
+		a_world.Reset();
+		a_puppet.Capture(a_world, a_world.StartYaw());
+	};
+	const JPH::Vec3 forward(std::sin(a_world.StartYaw()), std::cos(a_world.StartYaw()), 0);
+	bool            ok = true;
+	const struct { World::Terrain terrain; float reach, rise; bool checked{ true }; } walks[]{
+		{ World::Terrain::kSlope, 7.0f, 1.34f }, { World::Terrain::kSlope, 14.0f, 0.0f }, { World::Terrain::kStairs, 4.4f, 1.44f, false },
+		{ World::Terrain::kStairs, 8.8f, 0.0f, false }, { World::Terrain::kUneven, 6.0f, 0.0f } };
+	for (const auto& w : walks) {
+		restart(w.terrain);
+		const JPH::Vec3 start = pos(0);
+		bool            fell = false;
+		int             i = 0;
+		for (; i < 1500 && (pos(0) - start).Dot(forward) < w.reach; ++i) {
+			a_puppet.Step(a_world, i < 60 ? JPH::Vec3::sZero() : forward * Lab::g_config.puppet.walkSpeed, dt);
+			a_world.Step(dt);
+			fell |= a_puppet.rise != Puppet::Rise::kNone;
+		}
+		const float rose = pos(0).GetZ() - start.GetZ();
+		const bool  pass = !fell && i < 1500 && rose > w.rise - 0.15f && rose < w.rise + 0.25f;
+		std::printf("terrain %s: %s, %.2f m ahead after %.1f s, pelvis %+.2f m (ground %+.2f): %s\n", World::TerrainName(w.terrain), fell ? "FELL" : "stayed up",
+			(pos(0) - start).Dot(forward), i * dt, rose, w.rise, !w.checked ? "not checked (the plugin's walker stalls on stairs)" : pass ? "PASS" : "FAIL");
+		ok &= pass || !w.checked;
+	}
+	restart(World::Terrain::kFlat);
+	const float stand = pos(0).GetZ();
+	a_puppet.sneak = true;
+	for (int i = 0; i < 180; ++i) a_puppet.Step(a_world, JPH::Vec3::sZero(), dt), a_world.Step(dt);
+	const float crouched = pos(0).GetZ() / stand;
+	a_puppet.sneak = false;
+	const bool crouchOk = std::abs(crouched - Lab::g_config.puppet.sneakHeight) < 0.08f && a_puppet.rise == Puppet::Rise::kNone;
+	std::printf("crouch (key C): pelvis at %.2f of standing (fSneakHeight %.2f): %s\n", crouched, Lab::g_config.puppet.sneakHeight, crouchOk ? "PASS" : "FAIL");
+	a_puppet.aim = true;
+	for (int i = 0; i < 180; ++i) a_puppet.Step(a_world, JPH::Vec3::sZero(), dt), a_world.Step(dt);
+	a_puppet.aim = false;
+	int chest = 0, hands[2]{};
+	for (int i = 0; i < a_world.PartCount(); ++i) {
+		if (a_world.Part(i).name == "Chest") chest = i;
+		if (a_world.Part(i).name == "LArm_Hand") hands[0] = i;
+		if (a_world.Part(i).name == "RArm_Hand") hands[1] = i;
+	}
+	const JPH::Vec3 facing(std::sin(a_puppet.yaw), std::cos(a_puppet.yaw), 0);
+	const float     ahead[2]{ (pos(hands[0]) - pos(chest)).Dot(facing), (pos(hands[1]) - pos(chest)).Dot(facing) };
+	const bool      aimOk = ahead[0] > 0.25f && ahead[1] > 0.1f && a_puppet.rise == Puppet::Rise::kNone;
+	std::printf("rifle ready (key G): hands %.2f / %.2f m in front of the chest: %s\n", ahead[0], ahead[1], aimOk ? "PASS" : "FAIL");
+	a_world.Reset();
+	a_puppet.Capture(a_world, a_world.StartYaw());
+	return ok && crouchOk && aimOk ? 0 : 2;
+}
+
 // The sidebar's Save on a temporary copy of the plugin's file: one value changed and saved must read back changed, and
 // every other key in the file must keep its value (numbers compared as numbers: Save writes 8 as 8.0).
 int SaveTest(const std::filesystem::path& a_file)
@@ -252,16 +313,17 @@ int RollTest(World& a_world)
 		if (a_world.Part(i).name == "Head") head = i;
 	}
 	using K = std::optional<Death::Kind>;
-	const auto roll = [&](bool a_headlessOnly, float a_walk, float a_stagger, float a_stumble, float a_skip, int a_part) {
+	const auto roll = [&](bool a_headlessOnly, float a_walk, float a_stagger, float a_stumble, float a_skip, int a_part, bool a_crouched = false) {
 		g_plugin.walkHeadlessOnly = a_headlessOnly, g_plugin.walkChance = a_walk, g_plugin.staggerChance = a_stagger;
 		g_plugin.stumbleChance = a_stumble, g_plugin.headshotSkipChance = a_skip;
 		bool grip;
-		return Death::Roll(a_world, a_part, grip);
+		return Death::Roll(a_world, a_part, grip, a_crouched);
 	};
 	const bool ok = roll(true, 1, 0, 0, 0, chest) == K{} && roll(false, 1, 0, 0, 0, chest) == K{ Death::Kind::kWalk } &&
 	                roll(false, 0, 1, 0, 0, chest) == K{ Death::Kind::kStagger } && roll(false, 0, 0, 1, 0, chest) == K{ Death::Kind::kStumble } &&
 	                roll(false, 0, 0, 0, 0, chest) == K{} && roll(false, 0, 1, 1, 1, head) == K{} &&
-	                roll(false, 0, 1, 1, 1, chest) == K{ Death::Kind::kStagger };
+	                roll(false, 0, 1, 1, 1, chest) == K{ Death::Kind::kStagger } &&
+	                roll(false, 0, 1, 0, 0, chest, true) == (g_plugin.staggerCrouchStumble ? K{ Death::Kind::kStumble } : K{ Death::Kind::kStagger });
 	g_plugin = saved;
 	std::printf("roll test: %s\n", ok ? "PASS" : "FAIL");
 	return ok ? 0 : 2;
@@ -607,6 +669,12 @@ void DrawScene(World& a_world, const Puppet& a_puppet, const Death& a_death, boo
 		DrawLine3D({ cx + i, cy - 20, 0.001f }, { cx + i, cy + 20, 0.001f }, { 70, 75, 85, 255 });
 		DrawLine3D({ cx - 20, cy + i, 0.001f }, { cx + 20, cy + i, 0.001f }, { 70, 75, 85, 255 });
 	}
+	for (const auto& t : a_world.TerrainTris()) {  // key T; shaded by how much each face turns to the light
+		const JPH::Vec3     n = (t[1] - t[0]).Cross(t[2] - t[0]).NormalizedOr(JPH::Vec3::sAxisZ());
+		const float         light = 0.45f + 0.4f * n.GetZ() + 0.15f * n.GetX();
+		const unsigned char c = static_cast<unsigned char>(std::clamp(150.0f * light, 0.0f, 255.0f));
+		DrawTriangle3D(ToRl(t[0]), ToRl(t[1]), ToRl(t[2]), { c, static_cast<unsigned char>(c * 0.95f), static_cast<unsigned char>(c * 0.85f), 255 });
+	}
 	for (int i = 0; i < a_world.PartCount(); ++i) {
 		const auto& part = a_world.Part(i);
 		const auto  t = a_world.Bodies().GetWorldTransform(a_world.Body(i));
@@ -620,9 +688,23 @@ void DrawScene(World& a_world, const Puppet& a_puppet, const Death& a_death, boo
 		DrawCapsule(a, b, part.radius, 10, 4, color);
 		DrawCapsuleWires(a, b, part.radius, 10, 4, Fade(BLACK, 0.25f));
 	}
+	if (a_puppeting && a_puppet.aim) {  // key G: a rifle from the trigger hand through the support hand (drawn only, no mass)
+		int hand[2]{ -1, -1 };
+		for (int i = 0; i < a_world.PartCount(); ++i) {
+			if (a_world.Part(i).name == "LArm_Hand") hand[0] = i;
+			if (a_world.Part(i).name == "RArm_Hand") hand[1] = i;
+		}
+		if (hand[0] >= 0 && hand[1] >= 0) {
+			const JPH::Vec3 support(a_world.Bodies().GetCenterOfMassPosition(a_world.Body(hand[0])));
+			const JPH::Vec3 trigger(a_world.Bodies().GetCenterOfMassPosition(a_world.Body(hand[1])));
+			const JPH::Vec3 along = (support - trigger).NormalizedOr(JPH::Vec3::sAxisY());
+			DrawCylinderEx(ToRl(trigger - along * 0.3f), ToRl(support + along * 0.45f), 0.03f, 0.02f, 8, { 40, 40, 44, 255 });
+		}
+	}
 	if (a_puppeting) {
 		DrawSphere(ToRl(a_puppet.base), 0.04f, YELLOW);
-		for (const auto& s : a_puppet.spot) DrawCircle3D(ToRl(s - JPH::Vec3(0, 0, s.GetZ() - 0.002f)), 0.08f, { 0, 0, 1 }, 0, SKYBLUE);
+		for (const auto& s : a_puppet.spot)
+			DrawCircle3D(ToRl(JPH::Vec3(s.GetX(), s.GetY(), a_world.GroundZ(s.GetX(), s.GetY()) + 0.005f)), 0.08f, { 0, 0, 1 }, 0, SKYBLUE);
 	}
 }
 
@@ -775,7 +857,8 @@ int main(int argc, char** argv)
 			for (int d = 0; d < 4 && !headOnly; ++d) arms = std::max(arms, ArmShot(world, puppet, part, turns[d], dirs[d], false));
 		for (const char* part : { "LArm_UpperArm", "RArm_UpperArm" })
 			if (!headOnly) arms = std::max(arms, ArmShot(world, puppet, part, turns[0], dirs[0], true));
-		const int result = std::max({ walker, stagger, heads, arms, SaveTest(pluginSettings.path), RollTest(world) });
+		const int terrain = headOnly || armsOnly ? 0 : TerrainTest(world, puppet);
+		const int result = std::max({ walker, stagger, heads, arms, terrain, SaveTest(pluginSettings.path), RollTest(world) });
 		std::printf("%s\n", result ? "FAIL" : "PASS");
 		return result;
 	}
@@ -792,7 +875,7 @@ int main(int argc, char** argv)
 	JPH::Vec3  focus(0, 0, 1);
 	const float kStep = 1.0f / 60.0f;
 	float       accumulator = 0.0f, pollTimer = 0.0f;
-	bool        paused = false;
+	bool        paused = false, aim = false, sneak = false;
 	Sidebar     sidebar;  // the plugin's settings the sim uses, tunable; Save writes them to its file, Reset goes back to it
 	sidebar.Load();
 	PluginSettings fileValues = g_plugin;  // the plugin file's values as last loaded or saved (Reset)
@@ -828,6 +911,10 @@ int main(int argc, char** argv)
 			puppeting = puppet.Capture(world, world.StartYaw());
 		}
 		if (pressed(KEY_THREE)) puppeting = !puppeting;  // limp: the controller lets go; back on, it gets up from wherever it lies
+		if (pressed(KEY_G)) aim = !aim;                  // rifle at the ready
+		if (pressed(KEY_C)) sneak = !sneak;              // crouched
+		if (pressed(KEY_T)) world.SetTerrain(static_cast<World::Terrain>((static_cast<int>(world.GetTerrain()) + 1) % static_cast<int>(World::Terrain::kCount)));
+		puppet.aim = aim, puppet.sneak = sneak;          // kept across R (Capture starts the puppet afresh)
 		if (pressed(KEY_FOUR)) {  // soft walker that can fall
 			puppet.weak = !puppet.weak;
 			puppeting = true;
@@ -851,7 +938,7 @@ int main(int argc, char** argv)
 			const JPH::Vec3 dir(ray.direction.x, ray.direction.y, ray.direction.z);
 			if (const int part = world.Pick(JPH::Vec3(ray.position.x, ray.position.y, ray.position.z), dir); part >= 0) {
 				bool                             grip = true;
-				const std::optional<Death::Kind> kind = rolled            ? Death::Roll(world, part, grip)
+				const std::optional<Death::Kind> kind = rolled            ? Death::Roll(world, part, grip, puppeting && sneak)
 				                                        : pressed(KEY_Q) ? Death::Kind::kWalk
 				                                        : pressed(KEY_W) ? Death::Kind::kStagger
 				                                                              : Death::Kind::kStumble;
@@ -908,7 +995,9 @@ int main(int argc, char** argv)
 			12, 10, 20, RAYWHITE);
 		DrawText("LMB shoot (plugin's roll)   Q/W/E shoot at mouse (death walk / stagger / stumble)   arrows walk (Shift run)", 12, 36, 16, LIGHTGRAY);
 		DrawText("1 knock down   3 puppet on/off   4 weak on/off   F push   R reset", 12, 56, 16, LIGHTGRAY);
-		DrawText("P pause   N single step   RMB orbit   wheel zoom", 12, 76, 16, LIGHTGRAY);
+		DrawText(TextFormat("G rifle ready (%s)   C crouch (%s)   T terrain (%s)   P pause   N single step   RMB orbit   wheel zoom", aim ? "on" : "off",
+					 sneak ? "on" : "off", World::TerrainName(world.GetTerrain())),
+			12, 76, 16, LIGHTGRAY);
 		DrawText(settings.status.c_str(), 12, GetScreenHeight() - 46, 16, GRAY);
 		DrawText(pluginSettings.status.c_str(), 12, GetScreenHeight() - 26, 16, GRAY);
 		auto table = PluginTable(g_plugin);

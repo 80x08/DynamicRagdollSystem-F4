@@ -115,6 +115,12 @@ namespace DynamicRagdollSystem
 			ReadBool(root, "General", "bEnableHotReload", kIniHotReload);
 		}
 		const auto read = [&](const char* a_key, float& a_value, float a_min, float a_max) { ReadFloat(root, "Reaction", a_key, a_value, a_min, a_max); };
+		ReadBool(root, "Player", "bHitReactions", kPlayerHitReactions);
+		ReadBool(root, "Player", "bDeath", kPlayerDeath);
+		ReadFloat(root, "Player", "fMinDamage", kPlayerMinDamage, 0.0f, 10000.0f);
+		ReadFloat(root, "Player", "fHitSoftness", kPlayerHitSoftness, 0.0f, 1.0f);
+		REX::INFO("DynamicRagdollSystem: player settings: hit reactions {} (min damage {} softness {}) death {}"sv, kPlayerHitReactions,
+			kPlayerMinDamage, kPlayerHitSoftness, kPlayerDeath);
 		ReadBool(root, "Reaction", "bHumanoidOnly", kReactHumanoidOnly);
 		ReadBlacklist(root, "Reaction", kReactBlacklist);
 		ReadBlacklist(root, "Knockdown", kKnockBlacklist);

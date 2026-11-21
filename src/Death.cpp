@@ -840,7 +840,7 @@ namespace DynamicRagdollSystem
 	void Hook_KillImpl(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent, bool a_ragdollInstant)
 	{   //starting point for dead npc
 		// Kill moves, sync anims and furniture keep the vanilla death (forcing a ragdoll there cuts paired animations).
-		const bool candidate = a_actor && !a_actor->IsPlayerRef() && !a_actor->IsDead(false);
+		const bool candidate = a_actor && !IsPlayerExcluded(a_actor, kPlayerDeath) && !a_actor->IsDead(false);
 		const bool blacklisted = candidate && IsBlacklisted(a_actor, kDeathBlacklist);  // vanilla death, animation included
 		const bool npc = candidate && !blacklisted && !InLockedAnimation(a_actor);
 		if (blacklisted) LogSkipOnce(a_actor, "death skipped", "[Death] sBlacklist");
@@ -876,7 +876,7 @@ namespace DynamicRagdollSystem
 			g_deathMoveVel[a_actor->GetFormID()] = { velocity.x * kPhysicsPerGameUnit, velocity.y * kPhysicsPerGameUnit,
 				velocity.z * kPhysicsPerGameUnit };
 		}
-		(*g_killHook)(a_actor, a_attacker, a_damage, a_sendEvent, a_ragdollInstant);
+		(a_actor && a_actor->IsPlayerRef() && g_playerKillHook ? *g_playerKillHook : *g_killHook)(a_actor, a_attacker, a_damage, a_sendEvent, a_ragdollInstant);
 		std::scoped_lock lock{ g_mutex };
 		if (tracked && IsReallyDead(a_actor)) {
 			g_pendingDeaths.push_back(a_actor->GetFormID()); //put dead npc into queue to process it

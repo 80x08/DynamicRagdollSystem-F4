@@ -22,6 +22,9 @@ namespace Lab
 			float stepTime = 0.32f, stepLift = 0.15f, stepTrigger = 0.12f, stepLead = 0.5f, swingKp = 30.0f, swingAccel = 150.0f,
 			      stanceHold = 60.0f;
 			float weakSupport = 0.25f, giveUpAngle = 35.0f;
+			// From the game's GripRifleStraight walks: SneakWPNWalkForwardReady's COM is 0.70 of the skeleton's standing
+			// height, and spine-to-head it leans 13 degrees more than WPNWalkForwardReady.
+			float sneakHeight = 0.70f, sneakLean = 13.0f;
 		} puppet;
 	};
 	inline Config g_config;
@@ -68,6 +71,8 @@ namespace Lab
 			{ "Puppet", "fStanceHold", &p.stanceHold, 0, 200, "Planted foot and calf damping, 1/s. Keeps the standing leg from being dragged and kicking up." },
 			{ "Puppet", "fWeakSupport", &p.weakSupport, 0.05f, 1, "Key 4. Trunk springs as a fraction of key 3's: lower = wobblier, easier to knock over." },
 			{ "Puppet", "fGiveUpAngle", &p.giveUpAngle, 5, 90, "Key 4. Degrees the trunk may tip before it gives up, falls and gets up again." },
+			{ "Puppet", "fSneakHeight", &p.sneakHeight, 0.5f, 1, "Key C. Pelvis height crouched, fraction of standing height (fCrouch then applies below it)." },
+			{ "Puppet", "fSneakLean", &p.sneakLean, 0, 40, "Key C. Degrees the trunk leans forward crouched." },
 		};
 	}
 }
