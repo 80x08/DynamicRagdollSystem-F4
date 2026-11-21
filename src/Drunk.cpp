@@ -361,9 +361,7 @@ namespace DynamicRagdollSystem
 		bool Recover(RE::Actor* a_actor, const Puppet& a_p)
 		{
 			if (!a_p.ready) return false;
-			for (const auto& b : a_p.scan.bodies)
-				if (b.id.m_value == a_p.w.trunk[0].id) return RecoverOnFeet(a_actor, b, a_p.w.ground, a_p.w.standHeight, a_p.w.yaw);
-			return false;
+			return RecoverOnFeet(a_actor, a_p.scan.bodies, a_p.w.trunk[0].id, a_p.w.ground, a_p.w.standHeight, a_p.w.yaw);
 		}
 
 		void Knock(Puppet& a_p, RE::Actor* a_player)
@@ -426,19 +424,40 @@ namespace DynamicRagdollSystem
 	bool IsDrunk() { return g_drunk.has_value(); }
 
 	// Still on its feet: skip the from-the-floor get-up (RagdollLab Recover).
-	bool RecoverOnFeet(RE::Actor* a_actor, const BodyRef& a_pelvis, float a_ground, float a_standHeight, float a_yaw)
+	bool RecoverOnFeet(RE::Actor* a_actor, const std::vector<BodyRef>& a_bodies, std::uint32_t a_pelvis, float a_ground, float a_standHeight, float a_yaw)
 	{
 		auto* world = GetWorld(a_actor);
 		auto* npWorld = world ? world->m_worldNP.get() : nullptr;
 		if (!npWorld || !a_actor->currentProcess) return false;
 		const auto id = a_actor->GetFormID();
 		Vec3 pelvis{};
+		bool found = false;
+		std::vector<BonePose> poses;  // where the bodies are now: pinned there while the animation fades in
 		{
 			WorldWriteLock lock{ npWorld };
-			const auto* body = lock.held ? FindBody(npWorld->m_bodyManager.m_bodies, a_pelvis) : nullptr;
-			if (!body) return false;
-			pelvis = BodyPosition(*body);
+			if (!lock.held) return false;
+			static bool checked = false;
+			for (const auto& ref : a_bodies) {
+				const auto* body = FindBody(npWorld->m_bodyManager.m_bodies, ref);
+				if (!body) continue;
+				const auto pos = BodyPosition(*body);
+				if (ref.id.m_value == a_pelvis) {
+					pelvis = pos;
+					found = true;
+				}
+				if (ref.bone < 0 || ref.bone >= kMaxRagdollBones) continue;
+				const auto q = QuatFrom(body->m_transform.m_rotation);
+				if (!checked) {  // the quaternion must turn the body's x axis onto its matrix's first column
+					checked = true;
+					const auto x = Rotate(q, Vec3{ 1.0f, 0.0f, 0.0f });
+					const auto& c = body->m_transform.m_rotation.m_col[0];
+					REX::INFO("DynamicRagdollSystem: recover pose check: quaternion error {:.4f} (should be ~0)"sv,
+						Length(Sub(x, Vec3{ c.x, c.y, c.z })));
+				}
+				poses.push_back({ ref.bone, { pos.x, pos.y, pos.z, 0.0f }, { q.x, q.y, q.z, q.w }, { 1.0f, 1.0f, 1.0f, 0.0f }, ref.id.m_value });
+			}
 		}
+		if (!found) return false;
 		if (pelvis.z - a_ground < 0.6f * a_standHeight) return false;  // fallen over: vanilla get-up
 
 		a_actor->SetPosition({ pelvis.x * kPhysicsToGame, pelvis.y * kPhysicsToGame, a_ground * kPhysicsToGame }, true);
@@ -465,7 +484,7 @@ namespace DynamicRagdollSystem
 		{
 			// The hit reaction's drive blends the dynamic bodies back into the animation (fHitSoftness, fReactionTime).
 			std::scoped_lock lock{ g_mutex };
-			g_pending.push_back({ id, {}, 0x7FFFFFFF, 0.0f, false, true });
+			g_pending.push_back({ id, {}, 0x7FFFFFFF, 0.0f, false, true, std::move(poses), { pelvis.x, pelvis.y, a_ground }, a_yaw });
 		}
 		REX::INFO("DynamicRagdollSystem: {:08X} recovered on its feet (graph reset {})"sv, id, reverted);
 		return true;

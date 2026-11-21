@@ -35,6 +35,7 @@ Function IDs are all new (2.2M+ range); **vtable / RTTI IDs keep their OG number
 | 1348502 | graph pre-physics update | `0x14161C520` | 2256836 | `0x14131BE40` | signature + identical 10-call list |
 | 993992 | `hkbRagdollDriver::driveToPose` | `0x1416FDE80` | 2258034 | `0x141393F50` | 4th call of pre-physics update in both; same `+0x70` / `+0xB7` early-outs |
 | 1414229 | graph post-physics update | `0x14161C6F0` | 2256837 | `0x14131C020` | signature + identical 17-call list |
+| 1524363 | ragdoll bone remapper global (vfunc `+0x18`) | `0x145B04738` | 2702828 | `0x143348658` | same `+0x18` call in driveToPose's keyframe loop, then ragdoll `+0x38` |
 | 560275 | `hkbRagdollDriver::postPhysics` | `0x1416FF3A0` | 2258035 | `0x1413956D0` | 7th call of post-physics update in both |
 | 1273937 | graph per-frame update | `0x14161D9A0` | 2256850 | `0x14131D420` | 16th call of post-physics update in both |
 | 683498 | AddRagdollToWorld visitor | `0x140D643B0` | 2230588 | `0x140CB6750` | **signature changed**, see below |

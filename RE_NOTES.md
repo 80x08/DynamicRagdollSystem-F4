@@ -188,6 +188,21 @@ the get-up looked identical to vanilla (arms still clip through walls). So durin
 follow those ragdoll bodies; driving the get-up through the generator output is a dead end. Not traced further:
 postPhysics blending during knock state 6, the driver `+0x58` body set that driveToPose skips.
 
+**Track 18 (explicit poses) and the visible blend** (v-bash recovery): track 18 = palette of `numData` hkQsTransforms
+(0x30: translation, quaternion xyzw, scale), then an s8 map **palette index → bone** at `dataOffset +
+align16(capacity·0x30)`; valid when trackCount > 18, flag `0x10` clear, onFraction > 0. Each listed bone gets record
+`+0x20`/`+0x21` = 1 and is hard-keyframed (`0x1418A91E0`) to that transform as-is: **world space, physics units, the body's
+own transform** (the animation targets come from `0x141885920`, the bone chain from world-from-model). Human NPC: cap 18.
+At the end of driveToPose, if **every** bone was keyframed this step, `driver+0xBB = 1`; postPhysics `0x1416FF3A0` only
+blends the ragdoll into the output while `+0xBA` and `+0xBB` are 0. So with all bodies keyframed nothing physical is
+shown (the get-up above, and pinning all 18 bodies: the animation showed at once). Clearing `+0xBB` right after
+driveToPose returns (before postPhysics) keeps the blend with every body pinned.
+The keyframe loop applies record `r` to the body of `remap(r)`: global ID 1524363 `0x145B04738` (null = identity),
+vfunc `+0x18(remapper, context, r & 0xFFFF)` → s16 bone, then ragdoll interface (`driver+0x70`) vfunc `+0x38(bone)` →
+body object (hknpBodyId at `+0x10`). Identity on humans; a permutation on super mutants. Scaled skeletons (1.718):
+explicit poses rise straight up (x, y and rotation exact): +6.42 / +7.34 m at 0.1 s in two runs, ~8.8 m by 0.5 s, so
+not a fixed offset. Cause not traced; scaled skeletons are not pinned.
+
 World-from-model modes (exe strings `0x2E641B0`…): USE_OLD 0, USE_INPUT 1, COMPUTE 2, NONE 3, RAGDOLL 4.
 
 **Driving a living NPC's ragdoll:** enroll the graph (§4), make the bodies dynamic, and write track 13

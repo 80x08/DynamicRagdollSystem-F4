@@ -313,6 +313,9 @@ namespace DynamicRagdollSystem
 						drive->second.start = now;
 						drive->second.end = now + (entry.recover ? kBashRecoverTime : kReactionTime);
 						drive->second.recover = entry.recover;
+						drive->second.poses = entry.poses;
+						drive->second.poseAnchor = entry.poseAnchor;
+						drive->second.poseYaw = entry.poseYaw;
 					}
 					continue;
 				}
@@ -356,6 +359,16 @@ namespace DynamicRagdollSystem
 					reinterpret_cast<std::uintptr_t>(actor->currentProcess->middleHigh->animationGraphManager.get()) };
 				g_drives[driver].poseScale = root->world.scale;
 				g_drives[driver].recover = entry.recover;
+				g_drives[driver].poses = entry.poses;
+				g_drives[driver].poseAnchor = entry.poseAnchor;
+				g_drives[driver].poseYaw = entry.poseYaw;
+				// Scaled skeleton: driveToPose scales the animation targets by the character scale (0x1416FF7A0) but not
+				// explicit poses; pinned, a 1.72x human's bodies went ~8 m up. The stiffness blend instead.
+				// (Measured: not a fixed offset, the bodies drifted up 6.4-8.8 m; RE_NOTES.)
+				if (entry.recover && std::abs(root->world.scale - 1.0f) > 0.01f && !g_drives[driver].poses.empty()) {
+					g_drives[driver].poses.clear();
+					REX::INFO("DynamicRagdollSystem: {:08X} recovery: skeleton scale {:.3f}, not pinned; stiffness blend"sv, entry.formID, root->world.scale);
+				}
 				if (std::abs(root->world.scale - 1.0f) > 0.01f)
 					REX::INFO("DynamicRagdollSystem: {:08X} skeleton scale {:.3f}: drive targets scaled"sv, entry.formID, root->world.scale);
 			}
@@ -452,13 +465,19 @@ namespace DynamicRagdollSystem
 		com = Scale(com, 1.0f / mass);
 		// Floor level by height above the lowest body, not bone names: creature feet are Ankle/Toe/LFOOT.
 		// shortcut: fixed heights tuned for human-sized skeletons; scale by the actor's height if giants misbehave.
-		BoneMask feet;
-		for (const auto& s : samples)
-			if (s.pos.z - lowest < kFootBodyHeight && s.ref->bone >= 0 && s.ref->bone < kMaxRagdollBones) feet.set(s.ref->bone);
+		BoneMask feet, legs;
+		for (const auto& s : samples) {
+			if (s.ref->bone < 0 || s.ref->bone >= kMaxRagdollBones) continue;
+			if (s.pos.z - lowest < kFootBodyHeight) feet.set(s.ref->bone);
+			if (s.ref->leg) legs.set(s.ref->bone);
+		}
 		{
 			std::scoped_lock driveLock{ g_driveMutex };
 			for (auto& [driver, state] : g_drives)
-				if (state.formID == a_stumble.formID) state.footBones = feet;
+				if (state.formID == a_stumble.formID) {
+					state.footBones = feet;
+					state.legBones = legs | feet;
+				}
 		}
 		const bool hitKnown = std::any_of(samples.begin(), samples.end(),
 			[&](const Sample& a_s) { return a_s.ref->id.m_value == a_stumble.hitBody; });

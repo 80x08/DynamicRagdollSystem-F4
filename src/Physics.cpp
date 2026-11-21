@@ -434,10 +434,16 @@ namespace DynamicRagdollSystem
 			}
 		}
 
-		// No joint at all: the constraints are not back yet (a knock right after a get-up), not every limb cut off.
-		// Marked detached then, the limbs stayed lost once the joints came back a frame later.
+		// More limbs without a joint than joints: the constraints are not back yet (a knock right after a get-up; seen
+		// with 0 and with 1 of 15), not limbs cut off. Marked detached then, they stayed lost once the joints came back.
+		// The joints are dropped too, so the callers (which scan until there are joints) scan again.
+		if (cut.size() > a_stumble.joints.size()) {
+			REX::INFO("DynamicRagdollSystem: {:08X} {} limb bodies without a joint, {} joints: constraints not back yet; scanning again"sv,
+				a_stumble.formID, cut.size(), a_stumble.joints.size());
+			a_stumble.joints.clear();
+			cut.clear();
+		}
 		for (const auto& [id, name] : cut) {
-			if (a_stumble.joints.empty()) break;
 			a_stumble.detached.push_back(id);
 			REX::INFO("DynamicRagdollSystem: {:08X} body {} '{}' has no joint (limb already dismembered); ignored"sv, a_stumble.formID, id, name);
 		}

@@ -107,9 +107,18 @@ namespace DynamicRagdollSystem
 		}
 		if (a_actor->IsDead(false)) return reject("dead");
 		if (a_actor->knockState != 0) return reject("already down");
-		if (IsBlacklisted(a_actor, kKnockBlacklist)) return reject("[Knockdown] sBlacklist");
-		if (kHitKnockHumanoidOnly && !IsHumanoid(a_actor)) return reject("not humanoid");
-		if (!kHitKnockPowerArmor && RE::PowerArmor::ActorInPowerArmor(*a_actor)) return reject("power armor");
+		{
+			// Recovery blend running: its bodies are keyframed (pinned) with the velocities that hold them there; knocked
+			// dynamic again with those and no joints yet, they launched the body (~10 m/s, flew up). Bash again after it.
+			std::scoped_lock lock{ g_driveMutex };
+			if (std::any_of(g_drives.begin(), g_drives.end(), [&](const auto& a_e) { return a_e.second.formID == id && a_e.second.recover; }))
+				return reject("still recovering");
+		}
+		if (IsBlacklisted(a_actor, kBashBlacklist)) return reject("[Melee] sBlacklist");
+		if (!IsHumanoid(a_actor)) return reject("not humanoid");  // the walker needs a pelvis and two legs
+		if (const auto* root = a_actor->Get3D(); kBashSkipLargeSkeleton && root && root->world.scale > 1.01f)
+			return reject(std::format("large skeleton (scale {:.2f})", root->world.scale).c_str());
+		if (!kBashPowerArmor && RE::PowerArmor::ActorInPowerArmor(*a_actor)) return reject("power armor");
 		const bool roll = Roll(kBashStaggerChance);
 		REX::INFO("DynamicRagdollSystem: {:08X} bash: stagger {}"sv, a_actor->GetFormID(), roll ? "queued" : "not rolled");
 		if (!roll) return false;

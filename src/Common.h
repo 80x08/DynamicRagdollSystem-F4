@@ -277,6 +277,17 @@ namespace DynamicRagdollSystem
 		float         pushScale{ 1.0f };  // HitPushScale (final damage and flags)
 	};
 
+	// A ragdoll bone's world transform for generator-output track 18 (explicit poses): hkQsTransform, physics units.
+	struct BonePose
+	{
+		std::int32_t bone{};                                   // ragdoll map bone (ScanBodies); the driver's own index replaces it
+		float        translation[4]{};
+		float        rotation[4]{ 0.0f, 0.0f, 0.0f, 1.0f };  // quaternion x y z w
+		float        scale[4]{ 1.0f, 1.0f, 1.0f, 0.0f };
+		std::uint32_t body{};                                  // hknpBodyId, to find the driver's bone for it
+	};
+	static_assert(offsetof(BonePose, body) == 0x34);  // translation..scale stay one 0x30 block (memcpy'd to track 18)
+
 	struct Pending
 	{
 		RE::TESFormID formID{};
@@ -285,6 +296,9 @@ namespace DynamicRagdollSystem
 		float         pushScale{ 1.0f };          // HitPushScale of the hit
 		bool          burn{ false };              // started because the NPC is on fire
 		bool          recover{ false };           // RecoverOnFeet hand-back to animation: the recovery blend, not a hit
+		std::vector<BonePose> poses;              // ... the ragdoll pose at hand-back, the bodies are pinned there
+		Vec3          poseAnchor{};               // ... actor position (physics units) and heading the poses are relative to
+		float         poseYaw{ 0.0f };
 	};
 
 	// hkbRigidBodyRagdollControlData (0x40 bytes). Defaults are the values the engine itself writes into
@@ -499,6 +513,8 @@ namespace DynamicRagdollSystem
 	inline bool  kHitKnockPlayerOnly = false;       // only hits from the player count
 	// [Melee] the player's bash staggers the NPC (the death stagger, alive); [Knockdown] power armor, humanoid only and blacklist apply.
 	inline float kBashStaggerChance = 0.5f;
+	inline bool  kBashPowerArmor = false;           // NPCs in power armor can be bash-staggered
+	inline bool  kBashSkipLargeSkeleton = true;     // skeleton scale > 1.01 (big humans): no bash stagger (its recovery can't pin; RE_NOTES)
 	inline float kBashStaggerTime = 2.0f;           // s of stagger before it recovers on its feet (or gets up if it fell)
 	inline float kBashStaggerForce = 1.0f;          // bash push as a fraction of [Reaction] fHitPush/fBodyPush
 	inline float kBashRecoverTime = 1.0f;           // s the ragdoll fades into the animation after recovering on its feet (drunk mode too)
@@ -511,6 +527,8 @@ namespace DynamicRagdollSystem
 	inline std::mutex                 g_blacklistMutex;
 	inline std::vector<RE::TESFormID> kReactBlacklist{ kActorTypeTurret };
 	inline std::vector<RE::TESFormID> kKnockBlacklist{ kActorTypeTurret };
+	constexpr RE::TESFormID kSuperMutantRace = 0x0001A009;
+	inline std::vector<RE::TESFormID> kBashBlacklist{ kActorTypeTurret, kSuperMutantRace };
 	inline std::vector<RE::TESFormID> kBurnBlacklist;
 	inline std::vector<RE::TESFormID> kDeathBlacklist;
 	inline std::vector<RE::TESFormID> kCrawlBlacklist;
@@ -671,8 +689,15 @@ namespace DynamicRagdollSystem
 		float         burnProgress{ 0.0f };   // 0..1 towards the fall: the body loosens further
 		float         poseScale{ 1.0f };      // skeleton root world scale (race height): drive targets are scaled by it
 		bool          recover{ false };       // recovery blend (RecoverOnFeet): fixed kRecoverStiffness, weight fades over the whole time
+		std::vector<BonePose> poses;          // ... bodies pinned to these (track 18) while it fades; empty: driven at kRecoverStiffness
+		Vec3          poseAnchor{};           // ... moved along with the actor from here (physics units) and this heading
+		float         poseYaw{ 0.0f };
+		std::int8_t   posesUsable{ -1 };      // last track 18 state, for the log (-1 = not yet)
+		bool          posesChecked{ false };  // CheckRecoveryPins ran
+		bool          posesMapped{ false };   // pose bones replaced by the driver's own bone for each body
 		BoneMask      armBones{};            // ragdoll bone indices of the arms (bit per bone)
 		BoneMask      footBones{};          // ragdoll bone indices of the feet (bit per bone)
+		BoneMask      legBones{};           // ... of the legs (recovery stiffness blend: held at full strength)
 	};
 	inline std::mutex                                     g_driveMutex;
 	inline std::unordered_map<std::uintptr_t, DriveState> g_drives;  // key: hkbRagdollDriver*
@@ -781,6 +806,28 @@ namespace DynamicRagdollSystem
 	// Hook on the single DoHitMe call (task queue unpack, ID 1546751 + 0x921): see every hit before it is applied.
 	using DoHitMe = void (*)(RE::Actor*, RE::HitData*);
 	inline DoHitMe g_doHitMe{};
+
+	// Rotation matrix (Havok columns) to quaternion, in the convention of Rotate(Quat, Vec3) (Havok's own).
+	inline Quat QuatFrom(const RE::hkRotationf& a_rotation)
+	{
+		const auto m = [&](int a_row, int a_col) { return a_rotation.m_col[a_col][a_row]; };
+		const float trace = m(0, 0) + m(1, 1) + m(2, 2);
+		Quat q{};
+		if (trace > 0.0f) {
+			const float s = std::sqrt(trace + 1.0f) * 2.0f;
+			q = { (m(2, 1) - m(1, 2)) / s, (m(0, 2) - m(2, 0)) / s, (m(1, 0) - m(0, 1)) / s, 0.25f * s };
+		} else if (m(0, 0) > m(1, 1) && m(0, 0) > m(2, 2)) {
+			const float s = std::sqrt(1.0f + m(0, 0) - m(1, 1) - m(2, 2)) * 2.0f;
+			q = { 0.25f * s, (m(0, 1) + m(1, 0)) / s, (m(0, 2) + m(2, 0)) / s, (m(2, 1) - m(1, 2)) / s };
+		} else if (m(1, 1) > m(2, 2)) {
+			const float s = std::sqrt(1.0f + m(1, 1) - m(0, 0) - m(2, 2)) * 2.0f;
+			q = { (m(0, 1) + m(1, 0)) / s, 0.25f * s, (m(1, 2) + m(2, 1)) / s, (m(0, 2) - m(2, 0)) / s };
+		} else {
+			const float s = std::sqrt(1.0f + m(2, 2) - m(0, 0) - m(1, 1)) * 2.0f;
+			q = { (m(0, 2) + m(2, 0)) / s, (m(1, 2) + m(2, 1)) / s, 0.25f * s, (m(1, 0) - m(0, 1)) / s };
+		}
+		return q;
+	}
 
 	inline Mat3 RotationFrom(const RE::hkRotationf& a_rotation)
 	{
@@ -941,7 +988,7 @@ namespace DynamicRagdollSystem
 	// Ends a held-down knockdown with the body still on its feet: actor under the pelvis, graph reset, ragdoll blended into
 	// animation. False (pelvis below 60 % of a_standHeight, or the knockdown would not end): the engine get-up follows.
 	// Paralysis must already be off; takes g_mutex and the world lock.
-	bool RecoverOnFeet(RE::Actor* a_actor, const BodyRef& a_pelvis, float a_ground, float a_standHeight, float a_yaw);
+	bool RecoverOnFeet(RE::Actor* a_actor, const std::vector<BodyRef>& a_bodies, std::uint32_t a_pelvis, float a_ground, float a_standHeight, float a_yaw);
 	bool IsReallyDead(RE::Actor* a_actor);
 	bool PerformDefaultAction(RE::Actor* a_actor, RE::DEFAULT_OBJECT a_action);
 	void ReplaceDeath(Death&& a_death);
@@ -962,6 +1009,8 @@ namespace DynamicRagdollSystem
 	bool InjectRigidBodyControls(std::uintptr_t a_outputHolder, float a_stiffness, float a_weight, float a_dt, float a_catchUp,
 		float a_armStiffness, DriveState& a_state);
 	void Hook_DriveToPose(void* a_driver, float a_dt, void* a_context, void* a_output);
+	BonePose PlaceRecoveryPose(BonePose a_pose, Vec3 a_anchor, float a_yaw, const RE::Actor* a_actor);
+	void CheckRecoveryPins(const Stumble& a_stumble, RE::Actor* a_actor, float a_now);
 	void Hook_MovementRagdollQuery(void* a_manager, char** a_result);
 	bool Hook_IsRagdollActive(void* a_graph);
 	void InstallGraphUpdateHook();

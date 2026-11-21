@@ -71,6 +71,7 @@ namespace DynamicRagdollSystem
 				}
 				if (GetWorld(actor) == a_world) {
 					EnforceNoCCLayer(*it, actor);
+					CheckRecoveryPins(*it, actor, now);
 				}
 				if (it->burning && it->pushed && GetWorld(actor) == a_world) {
 					ApplyBurn(*it, actor, now);
@@ -82,7 +83,7 @@ namespace DynamicRagdollSystem
 			}
 		}
 		StartPendingDeaths(now);
-		struct Recovery { RE::TESFormID formID; BodyRef pelvis; float ground, standHeight, yaw; };
+		struct Recovery { RE::TESFormID formID; std::vector<BodyRef> bodies; std::uint32_t pelvis; float ground, standHeight, yaw; };
 		std::vector<Recovery> recoveries;  // bash staggers over: RecoverOnFeet takes g_mutex, so after the loop
 		{
 			std::scoped_lock lock{ g_mutex };
@@ -134,7 +135,7 @@ namespace DynamicRagdollSystem
 						const auto w = walker::g_walkers.find(it->formID);  // gone: the stagger fell, or never stood (balance stumble)
 						const auto pelvis = w == walker::g_walkers.end() || w->second.trunk.empty() ? it->bodies.end() :
 							std::find_if(it->bodies.begin(), it->bodies.end(), [&](const BodyRef& a_b) { return a_b.id.m_value == w->second.trunk[0].id; });
-						if (pelvis != it->bodies.end()) recoveries.push_back({ it->formID, *pelvis, w->second.ground, w->second.standHeight, w->second.yaw });
+						if (pelvis != it->bodies.end()) recoveries.push_back({ it->formID, it->bodies, pelvis->id.m_value, w->second.ground, w->second.standHeight, w->second.yaw });
 						else REX::INFO("DynamicRagdollSystem: {:08X} bash stagger over: down, vanilla get-up"sv, it->formID);
 					}
 					if (finishedOff) REX::INFO("DynamicRagdollSystem: {:08X} dying phase ended: {}"sv, it->formID,
@@ -161,7 +162,7 @@ namespace DynamicRagdollSystem
 			}
 		}
 		for (const auto& r : recoveries)
-			if (const auto actor = RE::TESForm::GetFormByID<RE::Actor>(r.formID); actor && !RecoverOnFeet(actor, r.pelvis, r.ground, r.standHeight, r.yaw))
+			if (const auto actor = RE::TESForm::GetFormByID<RE::Actor>(r.formID); actor && !RecoverOnFeet(actor, r.bodies, r.pelvis, r.ground, r.standHeight, r.yaw))
 				REX::INFO("DynamicRagdollSystem: {:08X} bash stagger over: not on its feet, vanilla get-up"sv, r.formID);
 		ScanForKnockdowns(now);
 		{

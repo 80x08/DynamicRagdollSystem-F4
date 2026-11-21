@@ -141,6 +141,7 @@ namespace DynamicRagdollSystem
 		ReadBlacklist(root, "Burning", kBurnBlacklist);
 		ReadBlacklist(root, "Death", kDeathBlacklist);
 		ReadBlacklist(root, "Crawl", kCrawlBlacklist);
+		ReadBlacklist(root, "Melee", kBashBlacklist);
 		read("fMinDamage", kMinDamage, 0.0f, 10000.0f);
 		read("fCooldown", kCooldown, 0.0f, 60.0f);
 		read("fReactionTime", kReactionTime, 0.2f, 10.0f);
@@ -187,6 +188,8 @@ namespace DynamicRagdollSystem
 		ReadFloat(root, "Melee", "fBashStaggerForce", kBashStaggerForce, 0.0f, 10.0f);
 		ReadFloat(root, "Melee", "fBashRecoverTime", kBashRecoverTime, 0.1f, 5.0f);
 		ReadFloat(root, "Melee", "fBashRecoverStiffness", kRecoverStiffness, 0.0f, 1.0f);
+		ReadBool(root, "Melee", "bBashPowerArmor", kBashPowerArmor);
+		ReadBool(root, "Melee", "bBashSkipLargeSkeleton", kBashSkipLargeSkeleton);
 		REX::INFO("DynamicRagdollSystem: melee settings: bash stagger chance {} time {}s force {} recover {}s stiffness {}"sv, kBashStaggerChance,
 			kBashStaggerTime, kBashStaggerForce, kBashRecoverTime, kRecoverStiffness);
 		{

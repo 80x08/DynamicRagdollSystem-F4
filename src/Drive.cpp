@@ -68,7 +68,8 @@ namespace DynamicRagdollSystem
 		if (a_armStiffness >= 0.0f) addEntry(a_armStiffness, a_state.armBones);
 		// Feet at full strength: on the soft hit the light foot bodies were pressed into the ground by the body's
 		// weight. Not while burning (the burn fall needs loose legs).
-		else addEntry(1.0f, a_state.footBones);
+		// Recovery stiffness blend (not pinned): the whole legs too; at fBashRecoverStiffness a 1.7x skeleton sagged at the knees.
+		else addEntry(1.0f, a_state.recover && a_state.poses.empty() ? a_state.legBones : a_state.footBones);
 		rigid->numData = entries;
 		rigid->onFraction = a_weight;
 		powered->onFraction = 0.0f;  // rigid-body control only
@@ -114,9 +115,174 @@ namespace DynamicRagdollSystem
 	}
 
 
+	// The recovery pose moves with the actor (its AI walks and attacks right away): rotated by its turn about it, then
+	// carried to where it is. Left in place, the mesh was blended between there and the actor a metre away.
+	BonePose PlaceRecoveryPose(BonePose a_pose, Vec3 a_anchor, float a_yaw, const RE::Actor* a_actor)
+	{
+		if (!a_actor) return a_pose;
+		constexpr float kGameToPhysics = 0.0142875f;
+		const auto  pos = a_actor->GetPosition();
+		const float turn = -(a_actor->data.angle.z - a_yaw);  // heading is clockwise; world rotation about z is counter-clockwise
+		const float c = std::cos(turn), s = std::sin(turn), sz = std::sin(0.5f * turn), w = std::cos(0.5f * turn);
+		const float x = a_pose.translation[0] - a_anchor.x, y = a_pose.translation[1] - a_anchor.y;
+		a_pose.translation[0] = pos.x * kGameToPhysics + c * x - s * y;
+		a_pose.translation[1] = pos.y * kGameToPhysics + s * x + c * y;
+		a_pose.translation[2] += pos.z * kGameToPhysics - a_anchor.z;
+		const Quat q{ a_pose.rotation[0], a_pose.rotation[1], a_pose.rotation[2], a_pose.rotation[3] };  // (0,0,sz,w) * q
+		a_pose.rotation[0] = w * q.x - sz * q.y;
+		a_pose.rotation[1] = w * q.y + sz * q.x;
+		a_pose.rotation[2] = w * q.z + sz * q.w;
+		a_pose.rotation[3] = w * q.w - sz * q.z;
+		return a_pose;
+	}
+
+	// Main thread (g_mutex held), once per recovery, a moment after pinning: the bodies must be where they were pinned.
+	// Pinning assumes each ragdoll bone's transform is its body's; on a super mutant they ended up distorted. Any body
+	// more than kPinTolerance off: pinning off for this recovery, the stiffness blend instead.
+	void CheckRecoveryPins(const Stumble& a_stumble, RE::Actor* a_actor, float a_now)
+	{
+		constexpr float kPinTolerance = 0.1f;  // physics units (m); the actor's own step between drive calls is a few cm
+		std::vector<BonePose> poses;
+		Vec3  anchor{};
+		float yaw = 0.0f;
+		{
+			std::scoped_lock lock{ g_driveMutex };
+			const auto it = std::find_if(g_drives.begin(), g_drives.end(), [&](const auto& a_e) { return a_e.second.formID == a_stumble.formID; });
+			if (it == g_drives.end()) return;
+			const auto& state = it->second;
+			if (!state.recover || state.poses.empty() || state.posesChecked || state.posesUsable != 1 || a_now - state.start < 0.1f) return;
+			poses = state.poses;
+			anchor = state.poseAnchor;
+			yaw = state.poseYaw;
+		}
+		auto* world = GetWorld(a_actor);
+		auto* npWorld = world ? world->m_worldNP.get() : nullptr;
+		if (!npWorld) return;
+		float worst = 0.0f;
+		int   worstBone = -1;
+		std::string detail;  // per body: pinned target vs where it is, for working out the engine's bone -> body conversion
+		{
+			WorldWriteLock lock{ npWorld };
+			if (!lock.held) return;  // next frame
+			for (const auto& pose : poses) {
+				const auto ref = std::find_if(a_stumble.bodies.begin(), a_stumble.bodies.end(), [&](const BodyRef& a_b) { return a_b.id.m_value == pose.body; });
+				const auto* body = ref != a_stumble.bodies.end() ? FindBody(npWorld->m_bodyManager.m_bodies, *ref) : nullptr;
+				if (!body) continue;
+				const auto  want = PlaceRecoveryPose(pose, anchor, yaw, a_actor);
+				const auto  got = BodyPosition(*body);
+				const float off = Length(Sub(got, Vec3{ want.translation[0], want.translation[1], want.translation[2] }));
+				const auto  q = QuatFrom(body->m_transform.m_rotation);
+				detail += std::format("\n    bone {:2} want ({:.3f},{:.3f},{:.3f} | {:.3f},{:.3f},{:.3f},{:.3f}) got ({:.3f},{:.3f},{:.3f} | {:.3f},{:.3f},{:.3f},{:.3f})",
+					pose.bone, want.translation[0], want.translation[1], want.translation[2], want.rotation[0], want.rotation[1], want.rotation[2],
+					want.rotation[3], got.x, got.y, got.z, q.x, q.y, q.z, q.w);
+				if (off > worst) {
+					worst = off;
+					worstBone = pose.bone;
+				}
+			}
+		}
+		std::scoped_lock lock{ g_driveMutex };
+		for (auto& [driver, state] : g_drives) {
+			if (state.formID != a_stumble.formID || !state.recover) continue;
+			state.posesChecked = true;
+			if (worst > kPinTolerance) state.poses.clear();
+		}
+		const auto pos = a_actor->GetPosition();
+		REX::INFO("DynamicRagdollSystem: {:08X} recovery pins: worst body {:.3f} off (bone {}){}"sv, a_stumble.formID, worst, worstBone,
+			worst > kPinTolerance ? std::format("; pinning off, stiffness blend instead. actor ({:.3f},{:.3f},{:.3f}) heading {:.3f}{}",
+				pos.x * 0.0142875f, pos.y * 0.0142875f, pos.z * 0.0142875f, a_actor->data.angle.z, detail) : ""s);
+	}
+
+	// Recovery: pins every ragdoll body to its pose at hand-back (track 18, explicit poses: driveToPose hard-keyframes each
+	// listed bone to that world transform), so while track 13's weight fades the visible pose blends from that frozen pose
+	// into the animation with no physics fighting the ground. False: no usable track 18 (the caller's stiffness drive runs).
+	// Track 18 is indexed by the driver's ragdoll bones, which need not be the ragdoll map's (ScanBodies) order: on a
+	// super mutant a body pinned by the map's index was 1.7 m off. Asks the ragdoll interface (driver+0x70, vfunc +0x38:
+	// bone -> body object, as driveToPose does) for each bone's body and re-indexes the poses by it. The object is a
+	// pointer (in game), not the id: the id's offset in it is found as the one where the known body ids turn up for most
+	// bones (at least half: a stray small field matching once is not it). Once per drive.
+	// driveToPose applies record r to the body of remap(r): a global bone remapper (OG 0x145B04738, AE 0x143348658),
+	// vfunc +0x18(remapper, context, r). Identity on humans; on a super mutant it permutes the bones (each body got
+	// another bone's pose). So the poses are indexed by the r whose remapped bone's body is theirs.
+	static void MapPoseBones(std::uintptr_t a_driver, void* a_context, std::int32_t a_bones, DriveState& a_state)
+	{
+		a_state.posesMapped = true;
+		std::uintptr_t ragdoll = 0;
+		if (!ReadField(a_driver, 0x70, ragdoll) || !ragdoll || a_bones <= 0) return;
+		using bodyOf_t = std::uintptr_t (*)(std::uintptr_t, std::int32_t);
+		const auto bodyOf = reinterpret_cast<bodyOf_t>((*reinterpret_cast<std::uintptr_t**>(ragdoll))[0x38 / 8]);
+		static REL::Relocation<std::uintptr_t*> remapperPtr{ REL::ID{ 1524363, 0, 2702828 } };
+		const auto remapper = *remapperPtr;
+		using remap_t = std::int16_t (*)(std::uintptr_t, void*, std::uint32_t);
+		const auto remap = [&](std::int32_t a_r) {
+			return remapper ? reinterpret_cast<remap_t>((*reinterpret_cast<std::uintptr_t**>(remapper))[0x18 / 8])(remapper, a_context, a_r & 0xFFFF) :
+			                  static_cast<std::int16_t>(a_r);
+		};
+		constexpr int kWords = 0x80 / 4;
+		std::vector<std::array<std::uint32_t, kWords>> objects(a_bones);  // [r]: the body object keyframed by record r
+		int remapped = 0;
+		for (std::int32_t r = 0; r < a_bones; ++r) {
+			objects[r].fill(0);
+			const auto bone = remap(r);
+			remapped += bone != r;
+			if (bone < 0 || bone >= a_bones) continue;
+			if (const auto object = bodyOf(ragdoll, bone)) SafeRead(object, objects[r].data(), sizeof(objects[r]));
+		}
+		const auto owner = [&](std::uint32_t a_id) {
+			return std::find_if(a_state.poses.begin(), a_state.poses.end(), [&](const BonePose& a_p) { return a_p.body == a_id; });
+		};
+		int best = -1, bestHits = 0;
+		for (int word = 0; word < kWords; ++word) {
+			int hits = 0;
+			for (const auto& object : objects) hits += owner(object[word]) != a_state.poses.end();
+			if (hits > bestHits) best = word, bestHits = hits;
+		}
+		int moved = 0;
+		if (bestHits * 2 >= a_bones) {
+			for (std::int32_t bone = 0; bone < a_bones; ++bone)
+				if (const auto pose = owner(objects[bone][best]); pose != a_state.poses.end()) {
+					moved += pose->bone != bone;
+					pose->bone = bone;
+				}
+		}
+		REX::INFO("DynamicRagdollSystem: {:08X} recovery: body id at +{:#x} of the driver's body object for {}/{} bones{}; remapper {} ({} bones remapped); {} poses re-indexed"sv,
+			a_state.formID, best * 4, bestHits, a_bones, bestHits * 2 >= a_bones ? "" : " (too few: map order kept)", remapper ? "on" : "off", remapped, moved);
+	}
+
+	static bool InjectExplicitPoses(std::uintptr_t a_driver, void* a_context, std::uintptr_t a_outputHolder, DriveState& a_state)
+	{
+		struct Header { std::int16_t capacity, numData, dataOffset, elementSize; float onFraction; std::uint8_t flags, type, pad[2]; };
+		std::uintptr_t output = 0;
+		std::int32_t   trackCount = 0;
+		if (!ReadField(a_outputHolder, 0, output) || !output || !ReadField(output, 4, trackCount)) return false;
+		auto* track = trackCount > 18 ? reinterpret_cast<Header*>(output + 0x10 + 18 * 0x10) : nullptr;
+		const auto count = static_cast<std::int16_t>(a_state.poses.size());
+		const bool usable = track && track->elementSize == 0x30 && track->dataOffset > 0 && track->capacity >= count && !(track->flags & 0x10);
+		if (a_state.posesUsable != static_cast<std::int8_t>(usable)) {  // logged on every change: an attack's graph output may drop it
+			a_state.posesUsable = static_cast<std::int8_t>(usable);
+			REX::INFO("DynamicRagdollSystem: {:08X} recovery at {:.2f}s: {} bodies {} (tracks {}, explicit pose track cap {} elem {:#x} flags {:#x})"sv,
+				a_state.formID, NowSeconds() - a_state.start, count, usable ? "pinned to the hand-back pose" : "NOT pinned, stiffness blend instead",
+				trackCount, track ? track->capacity : 0, track ? track->elementSize : 0, track ? track->flags : 0);
+		}
+		if (!usable) return false;
+		if (!a_state.posesMapped) MapPoseBones(a_driver, a_context, track->capacity, a_state);
+		const auto* actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.formID);
+		auto*      data = reinterpret_cast<std::uint8_t*>(output + track->dataOffset);
+		auto*      map = data + ((static_cast<std::size_t>(track->capacity) * 0x30 + 0xF) & ~std::size_t{ 0xF });  // palette index -> bone
+		for (std::int16_t i = 0; i < count; ++i) {
+			const auto pose = PlaceRecoveryPose(a_state.poses[i], a_state.poseAnchor, a_state.poseYaw, actor);
+			std::memcpy(data + static_cast<std::size_t>(i) * 0x30, pose.translation, 0x30);
+			map[i] = static_cast<std::uint8_t>(pose.bone);
+		}
+		track->numData = count;
+		track->onFraction = 1.0f;
+		return true;
+	}
+
 	void Hook_DriveToPose(void* a_driver, float a_dt, void* a_context, void* a_output)
 	{
 		float poseScale = 1.0f;
+		bool  pinned = false;  // every body pinned to the recovery pose (track 18) this call
 		{
 			std::scoped_lock lock{ g_driveMutex };
 			if (const auto it = g_drives.find(reinterpret_cast<std::uintptr_t>(a_driver)); it != g_drives.end()) {
@@ -147,7 +313,10 @@ namespace DynamicRagdollSystem
 				const float fadeOut = std::clamp((state.end - now) / std::max(state.end - state.start, 0.01f), 0.0f, 1.0f);
 				const float weight = state.recover ? fadeOut * fadeOut * (3.0f - 2.0f * fadeOut) : std::clamp((state.end - now) / kBlendOut, 0.0f, 1.0f);
 				if (a_dt > 0.0f && InjectRigidBodyControls(reinterpret_cast<std::uintptr_t>(a_output), stiffness, weight, a_dt, catchUp,
-						state.burning ? kBurnArmStiffness : -1.0f, state)) ++state.injected;
+						state.burning ? kBurnArmStiffness : -1.0f, state)) {
+					++state.injected;
+					if (state.recover && !state.poses.empty()) pinned = InjectExplicitPoses(reinterpret_cast<std::uintptr_t>(a_driver), a_context, reinterpret_cast<std::uintptr_t>(a_output), state);
+				}
 			}
 		}
 		// driveToPose builds its targets from the local pose (track 2, hkQsTransform 0x30 bytes per bone) without the
@@ -170,6 +339,10 @@ namespace DynamicRagdollSystem
 				}
 		}
 		g_driveToPose(a_driver, a_dt, a_context, a_output);
+		// Every bone keyframed: driveToPose sets driver+0xBB and postPhysics (0x1416FF3A0) then skips the ragdoll blend,
+		// so the animation showed at once. Cleared here, between the two, the pinned pose still blends into the animation.
+		// (A hand left unpinned instead hung at odd wrist angles and twisted the forearm/finger bones.)
+		if (pinned) *(reinterpret_cast<std::uint8_t*>(a_driver) + 0xBB) = 0;
 		for (std::int32_t i = 0; pose && i < count; ++i)
 			for (std::int32_t k = 0; k < 3; ++k) pose[i * 12 + k] = saved[i * 3 + k];
 	}

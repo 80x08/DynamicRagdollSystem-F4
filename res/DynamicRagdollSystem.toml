@@ -90,8 +90,15 @@ sBlacklist = ["Fallout4.esm|0x0B2BF3", "Fallout4.esm|0x0D77E3"]  # ActorTypeTurr
 [Melee]
 # Chance the player's bash (gun bash; with a melee weapon or unarmed the bash key is a power attack) staggers the NPC in ragdoll for fBashStaggerTime:
 # it steps to catch itself and recovers into its animation if still on its feet, else it falls and gets up normally.
-# Uses [Knockdown] bKnockdownPowerArmor, bKnockdownHumanoidOnly and sBlacklist. 0 = off. Range 0-1.
+# Only humans, ghouls, feral ghouls and super mutants. 0 = off. Range 0-1.
 fBashStaggerChance = 0.5
+# true = NPCs in power armor can be bash-staggered.
+bBashPowerArmor = false
+# true = NPCs with an enlarged skeleton (bigger than normal humans) are not staggered: their smooth recovery cannot be
+# done, they get the fallback blend instead.
+bBashSkipLargeSkeleton = true
+# NPCs never bash-staggered. Same format as [Reaction] sBlacklist.
+sBlacklist = ["Fallout4.esm|0x0B2BF3", "Fallout4.esm|0x0D77E3", "Fallout4.esm|0x01A009"]  # ActorTypeTurret, VertibirdRace, SuperMutantRace
 # Seconds the stagger lasts before it recovers (or gets up, if it fell). Range 0.1-10.
 fBashStaggerTime = 2.0
 # Push of the bash, as a fraction of [Reaction] fHitPush/fBodyPush. Higher = more steps, more falls. Range 0-10.
