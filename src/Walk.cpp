@@ -125,7 +125,7 @@ namespace DynamicRagdollSystem
 			const auto pelvisPos = c.Pos(s.trunk[0].id);
 			if (Length(moveVel) > 0.1f) {
 				const float turn = std::remainder(YawOf(moveVel) - s.yaw, 2.0f * std::numbers::pi_v<float>);
-				s.yaw += std::clamp(turn, -kDeathWalkTurnRate * dt, kDeathWalkTurnRate * dt);
+				s.yaw += std::clamp(turn, -c.turnRate * dt, c.turnRate * dt);
 			}
 			const auto facing = Yaw(s.yaw);
 			const auto right = Rotate(facing, kX);
@@ -202,13 +202,22 @@ namespace DynamicRagdollSystem
 			return true;
 		}
 
+		bool OnGround(const Ctx& c, std::uint32_t a_id)
+		{
+			const auto it = c.s.shapes.find(a_id);
+			if (it == c.s.shapes.end()) return c.Pos(a_id).z < c.s.ground + kContact;
+			const auto& cap = it->second;
+			return std::min(c.World(a_id, cap.a).z, c.World(a_id, cap.b).z) - cap.radius < c.s.ground + kContact;
+		}
+
 		// Builds the walker from the death pose (a_death.targets: the animated pose captured on the first frame), like
 		// RagdollLab's Puppet() from the live bodies, facing a_yaw. False if the skeleton lacks a pelvis, two feet, or a leg
 		// above each.
-		bool Setup(const Death& a_death, float a_yaw, const std::vector<const BodyRef*>& a_refs, const Ctx& a_c, Walker& a_s)
+		bool Setup(const std::vector<BodyTarget>& a_targets, float a_start, float a_yaw, const std::vector<const BodyRef*>& a_refs,
+			const Ctx& a_c, Walker& a_s)
 		{
 			const auto target = [&](std::uint32_t a_id) -> const BodyTarget* {
-				for (const auto& t : a_death.targets)
+				for (const auto& t : a_targets)
 					if (t.id == a_id) return &t;
 				return nullptr;
 			};
@@ -229,7 +238,7 @@ namespace DynamicRagdollSystem
 			}
 			const auto* pt = pelvis ? target(pelvis->id.m_value) : nullptr;
 			if (!pt || feet.size() != 2) return false;
-			a_s.deathStart = a_death.start;
+			a_s.deathStart = a_start;
 			a_s.yaw = a_yaw;
 			const auto facing = Transpose(Yaw(a_s.yaw));
 			const auto p = pt->pos;
@@ -298,7 +307,7 @@ namespace DynamicRagdollSystem
 			if (!a_death.groundCaptured && a_now - a_death.start < kGroundWait) return WalkResult::kWalking;
 			s = Walker{};
 			s.ground = a_death.groundCaptured ? a_death.groundAtDeath : a_death.feetCaptured.z - 0.1f;
-			if (!Setup(a_death, a_actor->data.angle.z, refs, c, s)) {
+			if (!Setup(a_death.targets, a_death.start, a_actor->data.angle.z, refs, c, s)) {
 				g_walkers.erase(a_death.formID);
 				REX::INFO("DynamicRagdollSystem: {:08X} death walk: skeleton not usable (needs a pelvis and two legs); stumbles instead"sv, a_death.formID);
 				return WalkResult::kUnable;

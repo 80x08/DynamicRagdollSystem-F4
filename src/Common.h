@@ -468,6 +468,16 @@ namespace DynamicRagdollSystem
 	inline bool  kPlayerDeath = false;
 	inline float kPlayerMinDamage = 3.0f;         // [Reaction] fMinDamage for hits on the player
 	inline float kPlayerHitSoftness = 0.3f;       // [Reaction] fHitSoftness for the player
+	// [Player] drunk mode (Drunk.cpp): key toggles the player into a walked ragdoll. g_drunkEnabled = bDrunk at game start.
+	inline bool  kPlayerDrunk = false;
+	inline int   kDrunkKey = 0x72;                // virtual-key code, F3
+	inline float kDrunkWalkSpeed = 1.5f;          // m/s (physics units)
+	inline float kDrunkRunSpeed = 3.0f;           // m/s with Shift
+	inline float kDrunkTurnRate = 4.0f;           // rad/s the body turns toward where it is walking
+	inline float kDrunkSupportMin = 0.3f;         // walking support factor (trunk springs and caps) wanders between these
+	inline float kDrunkSupportMax = 1.0f;
+	inline float kDrunkSwayTime = 1.5f;           // s per new support target (0.5-1.5x)
+	inline bool  g_drunkEnabled = false;
 	// [Knockdown] living NPCs knocked over by a burst of bullet hits (shotgun pellets) or one heavy hit.
 	inline int   kMultiHitCount = 5;                // hits needed within kMultiHitWindow (0 = off)
 	inline float kMultiHitWindow = 0.05f;           // s from the first hit of a burst
@@ -905,6 +915,12 @@ namespace DynamicRagdollSystem
 	void LogSkipOnce(RE::Actor* a_actor, std::string_view a_where, std::string_view a_why);
 	bool IsHumanoid(RE::Actor* a_actor);
 	bool IsPlayerExcluded(RE::Actor* a_actor, bool a_toggle, bool a_thirdPersonOnly = false);
+	// Drunk.cpp: DrunkFrame per world update, DrunkStep per Havok step; both return at once unless g_drunkEnabled / drunk.
+	void DrunkFrame(RE::bhkWorld* a_world);
+	void DrunkStep(RE::bhkWorld* a_world, float a_dt);
+	// a_recover: if standing, blend straight into animation (else the vanilla get-up); getting up: release once up.
+	void StopDrunk(bool a_recover, const char* a_why);
+	bool IsDrunk();
 	bool IsReallyDead(RE::Actor* a_actor);
 	bool PerformDefaultAction(RE::Actor* a_actor, RE::DEFAULT_OBJECT a_action);
 	void ReplaceDeath(Death&& a_death);

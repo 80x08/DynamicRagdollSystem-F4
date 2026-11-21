@@ -44,6 +44,12 @@ namespace DynamicRagdollSystem::walker
 		float         thighLength{}, shinLength{}, thighCom{}, shinCom{};  // hip-knee, knee-ankle; centre of mass as a fraction of each
 	};
 
+	// Get-up stages (drunk mode).
+	enum class Rise { kNone, kDown, kRoll, kKneel, kLunge, kStand };
+
+	// reach: along the arm from the shoulder (m); side: 0 left, 1 right.
+	struct Arm { std::uint32_t id{}, shoulder{}; float reach{}; int side{}; bool hand{}; };
+
 	struct Walker
 	{
 		float                                      deathStart{};  // the death this walker belongs to (a revived NPC dies again)
@@ -72,6 +78,15 @@ namespace DynamicRagdollSystem::walker
 		float                                      footGround[2]{};      // ground under each foot (rays, else ground)
 		float                                      landing{};            // ground under the spot (step ray) ...
 		bool                                       landingValid{};       // ... when it found one
+		// Drunk mode's get-up only (Drunk.cpp, port of RagdollLab GetUp); the deaths leave these empty.
+		std::vector<Arm>                           limbs;                // every arm body, with its shoulder
+		std::uint32_t                              head{};
+		Rise                                       rise{ Rise::kNone };
+		float                                      stageStart{}, riseYaw{}, rollTurn{}, upAt{ -1.0e9f };
+		int                                        front{};
+		std::uint32_t                              getUps{}, lunges{};
+		Vec3                                       pivot, stageFrom;
+		Vec3                                       hands[2];             // where the hands push up from the floor while kneeling up (left, right)
 	};
 	inline std::unordered_map<RE::TESFormID, Walker> g_walkers;  // main thread (Havok step, g_mutex held)
 
@@ -106,6 +121,7 @@ namespace DynamicRagdollSystem::walker
 		float                                               stiffness{ 1.0f };  // scales the trunk springs and damping
 		float                                               support{ 1.0f };    // scales the trunk's lift
 		bool                                                feetOnly{ false };  // trunk pulled sideways only as hard as the feet can push (stagger)
+		float                                               turnRate{ kDeathWalkTurnRate };  // rad/s Walk turns toward moveVel (drunk: its own)
 
 		const RE::hknpBody* Body(std::uint32_t a_id) const
 		{
@@ -175,5 +191,11 @@ namespace DynamicRagdollSystem::walker
 	void HoldStance(Ctx& c, const bool a_down[2]);
 	Vec3 OwnSide(const Ctx& c, Vec3 a_p, int a_foot, Vec3 a_right);
 	void Swing(Ctx& c, Vec3 a_to, float a_time, const Mat3& a_facing);
-	bool Setup(const Death& a_death, float a_yaw, const std::vector<const BodyRef*>& a_refs, const Ctx& a_c, Walker& a_s);
+	// a_targets: the standing pose captured while the bodies still followed the animation; a_start stored in deathStart.
+	bool Setup(const std::vector<BodyTarget>& a_targets, float a_start, float a_yaw, const std::vector<const BodyRef*>& a_refs,
+		const Ctx& a_c, Walker& a_s);
+	// One step of walking toward s.moveVel; false while no foot is planted (limp).
+	bool Walk(Ctx& c);
+	// Ctx::OnGround for the get-up: lowest capsule point within kContact of s.ground.
+	bool OnGround(const Ctx& c, std::uint32_t a_id);
 }

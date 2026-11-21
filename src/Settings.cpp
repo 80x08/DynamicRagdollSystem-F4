@@ -119,8 +119,22 @@ namespace DynamicRagdollSystem
 		ReadBool(root, "Player", "bDeath", kPlayerDeath);
 		ReadFloat(root, "Player", "fMinDamage", kPlayerMinDamage, 0.0f, 10000.0f);
 		ReadFloat(root, "Player", "fHitSoftness", kPlayerHitSoftness, 0.0f, 1.0f);
-		REX::INFO("DynamicRagdollSystem: player settings: hit reactions {} (min damage {} softness {}) death {}"sv, kPlayerHitReactions,
-			kPlayerMinDamage, kPlayerHitSoftness, kPlayerDeath);
+		ReadBool(root, "Player", "bDrunk", kPlayerDrunk);
+		{
+			float key = static_cast<float>(kDrunkKey);
+			ReadFloat(root, "Player", "iDrunkKey", key, 1.0f, 254.0f);
+			kDrunkKey = static_cast<int>(std::lround(key));
+		}
+		ReadFloat(root, "Player", "fDrunkWalkSpeed", kDrunkWalkSpeed, 0.0f, 10.0f);
+		ReadFloat(root, "Player", "fDrunkRunSpeed", kDrunkRunSpeed, 0.0f, 15.0f);
+		ReadFloat(root, "Player", "fDrunkTurnRate", kDrunkTurnRate, 0.1f, 30.0f);
+		ReadFloat(root, "Player", "fDrunkSupportMin", kDrunkSupportMin, 0.0f, 5.0f);
+		ReadFloat(root, "Player", "fDrunkSupportMax", kDrunkSupportMax, 0.0f, 5.0f);
+		if (kDrunkSupportMax < kDrunkSupportMin) std::swap(kDrunkSupportMin, kDrunkSupportMax);
+		ReadFloat(root, "Player", "fDrunkSwayTime", kDrunkSwayTime, 0.1f, 10.0f);
+		REX::INFO("DynamicRagdollSystem: player settings: hit reactions {} (min damage {} softness {}) death {} drunk {} (key 0x{:X}, walk {} run {} turn {})"sv,
+			kPlayerHitReactions, kPlayerMinDamage, kPlayerHitSoftness, kPlayerDeath, kPlayerDrunk, kDrunkKey, kDrunkWalkSpeed, kDrunkRunSpeed,
+			kDrunkTurnRate);
 		ReadBool(root, "Reaction", "bHumanoidOnly", kReactHumanoidOnly);
 		ReadBlacklist(root, "Reaction", kReactBlacklist);
 		ReadBlacklist(root, "Knockdown", kKnockBlacklist);

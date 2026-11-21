@@ -228,7 +228,7 @@ namespace DynamicRagdollSystem
 			for (const auto& t : a_death.targets)
 				if (const auto* r = ref(t.id); r && r->leg && !r->knee && !r->foot && r->side) hips = Add(hips, Scale(Flat(t.pos), r->side == 'R' ? 1.0f : -1.0f));
 			const float yaw = Length(hips) > 0.05f ? std::atan2(-hips.y, hips.x) : a_actor->data.angle.z;
-			if (!Setup(a_death, yaw, refs, c, s)) {
+			if (!Setup(a_death.targets, a_death.start, yaw, refs, c, s)) {
 				g_walkers.erase(a_death.formID);
 				REX::INFO("DynamicRagdollSystem: {:08X} death stagger: skeleton not usable (needs a pelvis and two legs); balance stumble instead"sv, a_death.formID);
 				return WalkResult::kUnable;

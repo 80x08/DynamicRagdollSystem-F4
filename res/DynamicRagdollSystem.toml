@@ -49,18 +49,6 @@ fAttackSoftness = 0.1
 # Catch-up speed while in a melee attack, so the body keeps up with fast swings. Range 0.5-100.
 fAttackCatchUpSpeed = 9.0
 
-[Player]
-# true = the player gets hit reactions too ([Reaction] settings), in third person only. Never in power armor.
-bHitReactions = false
-# [Reaction] fMinDamage for hits on the player (enemy hits on the player are much weaker than the player's). Range 0-10000.
-fMinDamage = 3.0
-# [Reaction] fHitSoftness for the player: body stiffness right after a hit, as a fraction of normal (0 = fully limp, 1 = no give). Range 0-1.
-fHitSoftness = 0.3
-# true = the player's death gets the stagger/stumble/walk/dying handling ([Death] and below). Never in power armor.
-# The game reloads a few seconds after the player dies, so long death walks, crawls and dying phases get cut off.
-# Read at game start only (hot reload cannot turn it on or off): off leaves the player's death code untouched.
-bDeath = false
-
 [Knockdown]
 # Living NPCs knocked over by bullet hits
 
@@ -390,3 +378,30 @@ fCrawlLimbAccel = 120.0
 fCrawlLimbTorque = 600.0
 # Seconds into the dying phase to get face down (a body on its side is rolled over), else no crawl. Range 0-10.
 fCrawlTurnTime = 3.0
+
+[Player]
+# !!!EXPERIMENTAL!!!
+# Alot of other mods modify the player, so USE WITH CAUTION. I won't be responding to crash reports if this is incompatible with blablabla mod.
+# Enable hitreactions on player in third person (no power armor).
+bHitReactions = false
+# [Reaction] fMinDamage for hits on the player (enemy hits on the player are much weaker than the player's). Range 0-10000.
+fMinDamage = 3.0
+# [Reaction] fHitSoftness for the player: body stiffness right after a hit, as a fraction of normal (0 = fully limp, 1 = no give). Range 0-1.
+fHitSoftness = 0.3
+# Enable death anims for player. Only takes effect on game start.
+bDeath = false
+# Enable drunk mode by pressing a key. Only takes effect on game start.
+bDrunk = false
+# Toggle key, Windows virtual-key code (0x72 = F3). Range 1-254.
+iDrunkKey = 0x72
+# Walking and running (Shift) speed in drunk mode, m/s. Ranges 0-10, 0-15.
+fDrunkWalkSpeed = 1.5
+fDrunkRunSpeed = 3.0
+# How fast the body turns toward where it is walking, rad/s. Range 0.1-30.
+fDrunkTurnRate = 4.0
+# How hard the body holds itself up while walking, as a factor of the death walk's full strength (springs and their
+# limits). It wanders between Min and Max, a new target every ~fDrunkSwayTime seconds: low = sags and staggers, below
+# ~0.5 it falls (and gets up again). Ranges 0-5, 0-5, 0.1-10.
+fDrunkSupportMin = 0.3
+fDrunkSupportMax = 1.0
+fDrunkSwayTime = 1.5

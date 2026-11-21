@@ -304,6 +304,12 @@ while the ragdoll is driven.
 - `Actor::KillImpl(attacker, damage, sendEvent, ragdollInstant)` vfunc `0x117` `0x140DB27B0` (vtable entry
   `0x142D3FC70`): with `ragdollInstant` → `0x140D70010` (instant ragdoll); without → performs the death action
   (default object `+0x300`, death animation). Death ragdoll bodies are dynamic on layer 32.
+- `PlayerCharacter::KillImpl` overrides slot `0x117` (`0x140EBAEE0`; vtable `0x142D438E8` from RTTI
+  `.?AVPlayerCharacter@@`): player bookkeeping, then a direct call to `Actor::KillImpl`. Hooks on the Actor vtable never
+  see the player.
+- Player knockdown works (in game): `KnockExplosion`/`pushactoraway` ragdolls the player, the player's position follows
+  the ragdoll (camera too), movement, Pip-Boy and activation are blocked while down; Paralysis (Actor+0x2D0 bit 31)
+  holds it down. End knockdown (`0x140E743E0`) and GetUpStart (`0x140F70850`) both have explicit player branches.
 
 ### Face on death (`BSFaceGenAnimationData`, layout in CommonLibF4)
 

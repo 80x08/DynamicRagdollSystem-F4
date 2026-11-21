@@ -14,6 +14,7 @@ namespace DynamicRagdollSystem
 	{
 		const float now = NowSeconds();
 		PollSettings(now);
+		DrunkFrame(a_world);
 		ScanForBurning(now);
 		ProcessPendingKnocks();  // before ProcessPending: a knocked NPC gets no new reaction
 		ProcessPending();
@@ -164,6 +165,7 @@ namespace DynamicRagdollSystem
 	// Loading a save or starting a new game: drop all tracking (saved corpses and NPCs come back with new bodies).
 	void ClearTracking()
 	{
+		StopDrunk(false, "loading");
 		ReleaseAttackLocks();
 		{
 			std::scoped_lock lock{ g_mutex };
@@ -214,6 +216,7 @@ namespace DynamicRagdollSystem
 				if (actor && GetWorld(actor) == a_world) StepKnockdownFall(down, actor, now);
 			}
 		}
+		DrunkStep(a_world, a_dt);
 		g_stepDt = 0.0f;
 	}
 

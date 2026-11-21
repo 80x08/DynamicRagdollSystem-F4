@@ -22,6 +22,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	}
 
 	LoadSettings();
+	g_drunkEnabled = kPlayerDrunk;  // [Player] bDrunk is read at game start only
 	InstallHooks();
 	if (const auto* messaging = F4SE::GetMessagingInterface()) {
 		messaging->RegisterListener([](F4SE::MessagingInterface::Message* a_msg) {
@@ -33,6 +34,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 				LoadSettings();
 			} else if (a_msg && a_msg->type == F4SE::MessagingInterface::kPreSaveGame) {
 				ReleaseAttackLocks();  // never save our kAttackingDisabled; re-set next frame while still burning
+				StopDrunk(false, "saving");  // never save drunk mode's Paralysis
 			}
 		});
 	}

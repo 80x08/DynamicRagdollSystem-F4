@@ -38,6 +38,8 @@ Function IDs are all new (2.2M+ range); **vtable / RTTI IDs keep their OG number
 | 560275 | `hkbRagdollDriver::postPhysics` | `0x1416FF3A0` | 2258035 | `0x1413956D0` | 7th call of post-physics update in both |
 | 1273937 | graph per-frame update | `0x14161D9A0` | 2256850 | `0x14131D420` | 16th call of post-physics update in both |
 | 683498 | AddRagdollToWorld visitor | `0x140D643B0` | 2230588 | `0x140CB6750` | **signature changed**, see below |
+| 1355205 | end knockdown (task 0xC) | `0x140E743E0` | 2232386 | `0x140D35E40` | `+0x130` knock mask `& 0xfe1fffff` (3rd of 3 hits in both), same player-singleton branch |
+| 614270 | GetUpStart event | `0x140F70850` | 2236296 | `0x140E0E020` | `+0x130` `& 0xfedfffff` / `\| 0xc00000`, same player-singleton branch |
 | 258136 | register ragdoll visitor (slot 3) | `0x140D64280` | 2230583 | `0x140CB6160` | **signature changed** |
 | 385024 | remove ragdoll visitor (slot 4) | `0x140DD5310` | 2230587 | `0x140CB6620` | **signature changed** |
 | 69396 | per-graph helper add (slot 5) | `0x140821160` | 2214611 | `0x14081BC50` | masked signature; `(args*, graph**)` unchanged |
