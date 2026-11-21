@@ -87,6 +87,21 @@ bKnockdownPlayerOnly = false
 # NPCs never knocked down: by hits, and by flying ragdolls. Same format as [Reaction] sBlacklist.
 sBlacklist = ["Fallout4.esm|0x0B2BF3", "Fallout4.esm|0x0D77E3"]  # ActorTypeTurret: turrets, VertibirdRace: vertibirds
 
+[Melee]
+# Chance the player's bash (gun bash; with a melee weapon or unarmed the bash key is a power attack) staggers the NPC in ragdoll for fBashStaggerTime:
+# it steps to catch itself and recovers into its animation if still on its feet, else it falls and gets up normally.
+# Uses [Knockdown] bKnockdownPowerArmor, bKnockdownHumanoidOnly and sBlacklist. 0 = off. Range 0-1.
+fBashStaggerChance = 0.5
+# Seconds the stagger lasts before it recovers (or gets up, if it fell). Range 0.1-10.
+fBashStaggerTime = 2.0
+# Push of the bash, as a fraction of [Reaction] fHitPush/fBodyPush. Higher = more steps, more falls. Range 0-10.
+fBashStaggerForce = 1.0
+# Seconds the body fades from ragdoll back into its animation after recovering on its feet (also drunk mode). Range 0.1-5.
+fBashRecoverTime = 1.0
+# Body stiffness during that fade, as a fraction of normal. Higher holds the pose better but can wobble as the feet are
+# dragged to the animation's; lower is smoother but sags. Range 0-1.
+fBashRecoverStiffness = 0.5
+
 [Burning]
 # true = living humanoid NPCs (humans, ghouls, super mutants) on fire stop attacking, flail their arms and stagger
 # around until the fire goes out. Detects base-game fire (flamer, Shishkebab, incendiary, Molotov, fire hazards).

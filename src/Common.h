@@ -176,6 +176,9 @@ namespace DynamicRagdollSystem
 		// Burning NPC knocked down (alive): no stumble/grip, only the dying-phase twitches and rolls while it
 		// lies there burning. Held down until the fire is out (or kBurnDownMax), then the engine get-up runs.
 		bool                    burnDown{ false };
+		// [Melee] bash stagger (alive): the death stagger at full strength, held down with Paralysis; at the end it
+		// recovers into animation if still on its feet (RecoverOnFeet), else the engine get-up runs.
+		bool                    bash{ false };
 		bool                    burnedToDeath{ false }; // died on fire: own twitch/roll strengths
 		bool                    seenDown{ false };     // the engine reported the knockdown (knockState != 0)
 		bool                    paralysisLock{ false }; // we applied the temporary Paralysis that keeps it down while burning
@@ -281,6 +284,7 @@ namespace DynamicRagdollSystem
 		std::uint32_t hitBody{ 0x7FFFFFFF };      // hknpBodyId of the body part that was hit, if known
 		float         pushScale{ 1.0f };          // HitPushScale of the hit
 		bool          burn{ false };              // started because the NPC is on fire
+		bool          recover{ false };           // RecoverOnFeet hand-back to animation: the recovery blend, not a hit
 	};
 
 	// hkbRigidBodyRagdollControlData (0x40 bytes). Defaults are the values the engine itself writes into
@@ -493,6 +497,14 @@ namespace DynamicRagdollSystem
 	inline bool  kHitKnockPowerArmor = false;
 	inline bool  kHitKnockHumanoidOnly = true;
 	inline bool  kHitKnockPlayerOnly = false;       // only hits from the player count
+	// [Melee] the player's bash staggers the NPC (the death stagger, alive); [Knockdown] power armor, humanoid only and blacklist apply.
+	inline float kBashStaggerChance = 0.5f;
+	inline float kBashStaggerTime = 2.0f;           // s of stagger before it recovers on its feet (or gets up if it fell)
+	inline float kBashStaggerForce = 1.0f;          // bash push as a fraction of [Reaction] fHitPush/fBodyPush
+	inline float kBashRecoverTime = 1.0f;           // s the ragdoll fades into the animation after recovering on its feet (drunk mode too)
+	// Recovery blend stiffness, fraction of the engine gains: full gains dragged the feet, still planted where the stagger
+	// left them, across the ground toward the animation's (the wobble); limp sags.
+	inline float kRecoverStiffness = 0.5f;
 	// sBlacklist per feature: FormIDs of NPCs (reference or base), races, or keywords (on the NPC base or its race)
 	// the feature leaves alone. Guarded by g_blacklistMutex (hot reload rewrites them while hooks read them).
 	constexpr RE::TESFormID kActorTypeTurret = 0x000B2BF3;
@@ -623,6 +635,10 @@ namespace DynamicRagdollSystem
 		float         force{};
 		Vec3          point{};  // world impact point (average for a burst)
 		bool          hasPoint{ false };
+		bool          bash{ false };  // [Melee] bash stagger instead of a knockdown (force unused)
+		std::uint32_t hitBody{ 0x7FFFFFFF };
+		float         pushScale{ 1.0f };
+		float         damage{ 0.0f };
 	};
 	struct HitKick
 	{
@@ -654,6 +670,7 @@ namespace DynamicRagdollSystem
 		bool          burning{ false };       // on fire: fixed loose stiffness, arms on their own soft entry
 		float         burnProgress{ 0.0f };   // 0..1 towards the fall: the body loosens further
 		float         poseScale{ 1.0f };      // skeleton root world scale (race height): drive targets are scaled by it
+		bool          recover{ false };       // recovery blend (RecoverOnFeet): fixed kRecoverStiffness, weight fades over the whole time
 		BoneMask      armBones{};            // ragdoll bone indices of the arms (bit per bone)
 		BoneMask      footBones{};          // ragdoll bone indices of the feet (bit per bone)
 	};
@@ -921,6 +938,10 @@ namespace DynamicRagdollSystem
 	// a_recover: if standing, blend straight into animation (else the vanilla get-up); getting up: release once up.
 	void StopDrunk(bool a_recover, const char* a_why);
 	bool IsDrunk();
+	// Ends a held-down knockdown with the body still on its feet: actor under the pelvis, graph reset, ragdoll blended into
+	// animation. False (pelvis below 60 % of a_standHeight, or the knockdown would not end): the engine get-up follows.
+	// Paralysis must already be off; takes g_mutex and the world lock.
+	bool RecoverOnFeet(RE::Actor* a_actor, const BodyRef& a_pelvis, float a_ground, float a_standHeight, float a_yaw);
 	bool IsReallyDead(RE::Actor* a_actor);
 	bool PerformDefaultAction(RE::Actor* a_actor, RE::DEFAULT_OBJECT a_action);
 	void ReplaceDeath(Death&& a_death);
@@ -964,6 +985,7 @@ namespace DynamicRagdollSystem
 	void KnockOverStanding(RE::bhkWorld* a_world, float a_now);
 	void CountKnockdownHit(RE::Actor* a_actor, const RE::HitData& a_hit);
 	void ProcessPendingKnocks();
+	bool QueueBashStagger(RE::Actor* a_actor, const RE::HitData& a_hit);  // true: queued (the hit is not also counted for a knockdown)
 
 	// Death.cpp
 	void ApplyGrip(Death& a_stumble, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_strength);

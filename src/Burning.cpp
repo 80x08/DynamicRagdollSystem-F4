@@ -176,11 +176,11 @@ namespace DynamicRagdollSystem
 		if (a_lock && a_actor) {
 			a_actor->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, *paralysis, 1.0f);
 			a_death.paralysisLock = true;
-			REX::INFO("DynamicRagdollSystem: {:08X} burning: held down (paralysis)"sv, a_death.formID);
+			REX::INFO("DynamicRagdollSystem: {:08X} held down (paralysis)"sv, a_death.formID);
 		} else if (!a_lock) {
 			if (a_actor) a_actor->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, *paralysis, -1.0f);
 			a_death.paralysisLock = false;
-			REX::INFO("DynamicRagdollSystem: {:08X} burning: released (paralysis)"sv, a_death.formID);
+			REX::INFO("DynamicRagdollSystem: {:08X} released (paralysis)"sv, a_death.formID);
 		}
 	}
 

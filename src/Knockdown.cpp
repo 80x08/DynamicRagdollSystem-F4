@@ -82,6 +82,84 @@ namespace DynamicRagdollSystem
 		}
 	}
 
+	// [Melee] The player's bash: rolled fBashStaggerChance, queued as a knockdown that ProcessPendingKnocks turns into
+	// the bash stagger. Called before the engine applies the hit, so the caller can drop its vanilla stagger.
+	bool QueueBashStagger(RE::Actor* a_actor, const RE::HitData& a_hit)
+	{
+		if (kBashStaggerChance <= 0.0f || a_actor->IsPlayerRef()) return false;
+		const auto aggressor = a_hit.aggressor.get();
+		if (!aggressor || !aggressor->IsPlayerRef()) return false;
+		// The hit's bash flags, or the attack record's (ATKD flag 0x2 Bash Attack). With a melee weapon or unarmed the bash
+		// key is a power attack (in game: flags kMeleeAttack | kPowerAttack, ATKD 0x4), so that counts too.
+		constexpr std::uint32_t kAttackBash = 0x2;
+		const std::uint32_t attackFlags = a_hit.attackData ? a_hit.attackData->data.flags : 0;
+		const bool bash = a_hit.flags.any(RE::HitData::Flag::kBash, RE::HitData::Flag::kTimedBash) || (attackFlags & kAttackBash) ||
+		                  a_hit.flags.all(RE::HitData::Flag::kMeleeAttack, RE::HitData::Flag::kPowerAttack);
+		const auto id = a_actor->GetFormID();
+		const auto reject = [&](const char* a_why) {
+			REX::INFO("DynamicRagdollSystem: {:08X} player hit (flags {:08X}, attack flags {:X}): no bash stagger, {}"sv, id,
+				a_hit.flags.underlying(), attackFlags, a_why);
+			return false;
+		};
+		if (!bash) {
+			if (a_hit.flags.any(RE::HitData::Flag::kMeleeAttack) || a_hit.attackData) return reject("not a bash");
+			return false;  // gunfire: not worth a line per bullet
+		}
+		if (a_actor->IsDead(false)) return reject("dead");
+		if (a_actor->knockState != 0) return reject("already down");
+		if (IsBlacklisted(a_actor, kKnockBlacklist)) return reject("[Knockdown] sBlacklist");
+		if (kHitKnockHumanoidOnly && !IsHumanoid(a_actor)) return reject("not humanoid");
+		if (!kHitKnockPowerArmor && RE::PowerArmor::ActorInPowerArmor(*a_actor)) return reject("power armor");
+		const bool roll = Roll(kBashStaggerChance);
+		REX::INFO("DynamicRagdollSystem: {:08X} bash: stagger {}"sv, a_actor->GetFormID(), roll ? "queued" : "not rolled");
+		if (!roll) return false;
+		Vec3 dir{};
+		std::uint32_t hitBody = 0x7FFFFFFF;
+		ReadHitInfo(a_actor, a_hit, dir, hitBody);
+		const float pushScale = HitPushScale(a_hit);
+		std::scoped_lock lock{ g_mutex };
+		QueueKnock(a_actor->GetFormID(), dir, 0.0f, NowSeconds(), {}, false);
+		auto& knock = g_pendingKnocks.back();
+		knock.bash = true;
+		knock.hitBody = hitBody;
+		knock.pushScale = pushScale;
+		knock.damage = a_hit.totalDamage;
+		return true;
+	}
+
+	// Bash stagger: the engine ragdoll with no push of its own (KnockExplosion force 0), driven by the death stagger
+	// (StepDeathStumble) at full strength for kBashStaggerTime; Hooks.cpp holds it down and recovers it after.
+	static void StartBashStagger(RE::Actor* a_actor, const PendingKnock& a_knock)
+	{
+		const auto pick = [](const Range& a_range) { return Random(a_range.min, a_range.max); };
+		a_actor->currentProcess->KnockExplosion(a_actor, a_actor->GetPosition(), 0.0f);
+		RE::NiPoint3 velocity{};
+		a_actor->GetLinearVelocity(velocity);
+		constexpr float kPhysicsPerGameUnit = 0.0142875f;
+		Death down{};
+		down.formID = a_knock.formID;
+		down.start = NowSeconds();
+		down.end = down.start + kBashStaggerTime;
+		down.bash = true;
+		down.stagger = true;
+		down.stumble = true;
+		down.grip = false;
+		down.support = pick(kDeathSupport);  // the balance stumble, if the stagger can't stand on this skeleton
+		down.upright = pick(kDeathUpright);
+		down.braking = pick(kDeathBraking);
+		down.tip = pick(kDeathStaggerTip);
+		down.staggerUpright = pick(kStaggerUpright);
+		down.staggerBraking = pick(kDeathStaggerBraking);
+		down.flail = pick(kFlailStrength);
+		down.hitDir = a_knock.dir;
+		down.hitBody = a_knock.hitBody;
+		down.pushScale = a_knock.pushScale;
+		down.damage = a_knock.damage;
+		down.moveVel = { velocity.x * kPhysicsPerGameUnit, velocity.y * kPhysicsPerGameUnit, velocity.z * kPhysicsPerGameUnit };
+		ReplaceDeath(std::move(down));
+		REX::INFO("DynamicRagdollSystem: {:08X} bash stagger started ({:.1f}s)"sv, a_knock.formID, kBashStaggerTime);
+	}
+
 	// Starts the queued knockdowns: ends a running hit reaction first (a driven reaction pins the body, as for the burn
 	// fall), then the engine's explosion knockdown pushed along the hits.
 	void ProcessPendingKnocks()
@@ -100,6 +178,11 @@ namespace DynamicRagdollSystem
 				if (!EndStumble(*it, actor)) return false;  // world lock busy: retry next update
 				SetAttackLock(*it, actor, false);
 				g_stumbles.erase(it);
+			}
+			if (a_knock.bash) {
+				if (std::none_of(g_deaths.begin(), g_deaths.end(), [&](const Death& a_d) { return a_d.formID == a_knock.formID; }))
+					StartBashStagger(actor, a_knock);
+				return true;
 			}
 			// The engine's own push gives every body the same speed. With an impact point: force 0 (the engine skips its
 			// push but still ragdolls the actor) and our own push with falloff, applied in StepKnockdownFall.

@@ -219,7 +219,8 @@ namespace DynamicRagdollSystem
 		// Strength decays steadily from the moment of death, so the body buckles progressively instead of
 		// standing at full strength and dropping at the end.
 		const float fadeFrom = a_stumble.stumbleStart != 0.0f ? a_stumble.stumbleStart : a_stumble.start;
-		const float fade = std::clamp((a_stumble.end - a_now) / std::max(a_stumble.end - fadeFrom, 0.01f), 0.0f, 1.0f);
+		// A bash stagger (alive) never fades: it keeps its feet unless the push knocks it over.
+		const float fade = a_stumble.bash ? 1.0f : std::clamp((a_stumble.end - a_now) / std::max(a_stumble.end - fadeFrom, 0.01f), 0.0f, 1.0f);
 		if (fade <= 0.0f) return;
 
 		// 1. Whole-rig balance. Every body gets the velocity change of one rigid body, so the
@@ -310,7 +311,7 @@ namespace DynamicRagdollSystem
 				return;
 			}
 			if (result == WalkResult::kWalking) {
-				ApplyKillingPush(a_stumble, npWorld, samples, centre, mass, kDeathPushScale);
+				ApplyKillingPush(a_stumble, npWorld, samples, centre, mass, a_stumble.bash ? kBashStaggerForce : kDeathPushScale);
 				Vec3        feetAt{};
 				const float flailing = FlailAmount(a_stumble, centre, velocity, feetMidpoint(feetAt) ? &feetAt : nullptr, feetLevel, trunkLevel,
 					kDeathStaggerCatchSpeed, kDeathStaggerCatchRange);
@@ -580,7 +581,7 @@ namespace DynamicRagdollSystem
 				RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
 				g_linearImpulse(npWorld, foot->ref->id.m_value, &nativeImpulse);
 			}
-			ApplyKillingPush(a_stumble, npWorld, samples, com, mass, kDeathPushScale);
+			ApplyKillingPush(a_stumble, npWorld, samples, com, mass, a_stumble.bash ? kBashStaggerForce : kDeathPushScale);
 		}
 
 		// 3. Grip: a hand clutches the body part the killing shot hit; the free hands brace for the fall.

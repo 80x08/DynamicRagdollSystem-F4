@@ -182,6 +182,13 @@ namespace DynamicRagdollSystem
 				kHeavyHitDamage, kHeavyHitChance, kHeavyHitForce, kHitKnockReach, kHitKnockMinFraction, kHitKnockCooldown, kHitKnockPowerArmor, kHitKnockHumanoidOnly,
 				kHitKnockPlayerOnly);
 		}
+		ReadFloat(root, "Melee", "fBashStaggerChance", kBashStaggerChance, 0.0f, 1.0f);
+		ReadFloat(root, "Melee", "fBashStaggerTime", kBashStaggerTime, 0.1f, 10.0f);
+		ReadFloat(root, "Melee", "fBashStaggerForce", kBashStaggerForce, 0.0f, 10.0f);
+		ReadFloat(root, "Melee", "fBashRecoverTime", kBashRecoverTime, 0.1f, 5.0f);
+		ReadFloat(root, "Melee", "fBashRecoverStiffness", kRecoverStiffness, 0.0f, 1.0f);
+		REX::INFO("DynamicRagdollSystem: melee settings: bash stagger chance {} time {}s force {} recover {}s stiffness {}"sv, kBashStaggerChance,
+			kBashStaggerTime, kBashStaggerForce, kBashRecoverTime, kRecoverStiffness);
 		{
 			const auto readBurn = [&](const char* a_key, float& a_value, float a_min, float a_max) { ReadFloat(root, "Burning", a_key, a_value, a_min, a_max); };
 			ReadBool(root, "Burning", "bBurnReaction", kBurnReaction);

@@ -358,53 +358,12 @@ namespace DynamicRagdollSystem
 			return true;
 		}
 
-		// Still on its feet: skip the from-the-floor get-up (RagdollLab Recover). Actor under the pelvis, end the knockdown,
-		// put the graph back to its default state and blend the ragdoll into the animation. Paralysis must already be off.
 		bool Recover(RE::Actor* a_actor, const Puppet& a_p)
 		{
-			auto* world = GetWorld(a_actor);
-			auto* npWorld = world ? world->m_worldNP.get() : nullptr;
-			if (!a_p.ready || !npWorld || !a_actor->currentProcess) return false;
-			Vec3 pelvis{};
-			{
-				WorldWriteLock lock{ npWorld };
-				const BodyRef* ref = nullptr;
-				for (const auto& b : a_p.scan.bodies)
-					if (b.id.m_value == a_p.w.trunk[0].id) ref = &b;
-				const auto* body = lock.held && ref ? FindBody(npWorld->m_bodyManager.m_bodies, *ref) : nullptr;
-				if (!body) return false;
-				pelvis = BodyPosition(*body);
-			}
-			if (pelvis.z - a_p.w.ground < 0.6f * a_p.w.standHeight) return false;  // fallen over: vanilla get-up
-
-			a_actor->SetPosition({ pelvis.x * kPhysicsToGame, pelvis.y * kPhysicsToGame, a_p.w.ground * kPhysicsToGame }, true);
-			a_actor->data.angle = { 0.0f, 0.0f, a_p.w.yaw };
-			auto* middleHigh = a_actor->currentProcess->middleHigh;
-			if (middleHigh && !middleHigh->charController) {  // seen once on an NPC in RagdollLab: walked in place without it
-				a_actor->InitHavok();
-				REX::INFO("DynamicRagdollSystem: 00000014 drunk: controller was missing, rebuilt: {}"sv, middleHigh->charController != nullptr);
-			}
-			// GetUpStart event (OG 0x140F70850, AE 0x140E0E020): resets the character controller from the actor.
-			using getUpStart_t = bool (*)(RE::Actor*);
-			static REL::Relocation<getUpStart_t> getUpStart{ REL::ID{ 614270, 0, 2236296 } };
-			getUpStart(a_actor);
-			// End knockdown (task 0xC, OG 0x140E743E0, AE 0x140D35E40): removes the ragdoll, knockState 0. No-op while paralyzed.
-			using end_t = void (*)(RE::AIProcess*, RE::Actor*, bool);
-			static REL::Relocation<end_t> endKnockdown{ REL::ID{ 1355205, 0, 2232386 } };
-			endKnockdown(a_actor->currentProcess, a_actor, false);
-			if (a_actor->knockState != 0) {
-				REX::INFO("DynamicRagdollSystem: 00000014 drunk: knockdown did not end (state {}), vanilla get-up"sv, static_cast<int>(a_actor->knockState));
-				return false;
-			}
-			// The graph is still in its ragdoll state: only the get-up animation's end would take it back to locomotion.
-			const bool reverted = a_actor->RevertAnimationGraphManager(true);
-			{
-				// The hit reaction's drive blends the dynamic bodies back into the animation ([Player] fHitSoftness, fReactionTime).
-				std::scoped_lock lock{ g_mutex };
-				g_pending.push_back({ a_actor->GetFormID(), {}, 0x7FFFFFFF, 0.0f });
-			}
-			REX::INFO("DynamicRagdollSystem: 00000014 drunk: recovered on its feet (graph reset {})"sv, reverted);
-			return true;
+			if (!a_p.ready) return false;
+			for (const auto& b : a_p.scan.bodies)
+				if (b.id.m_value == a_p.w.trunk[0].id) return RecoverOnFeet(a_actor, b, a_p.w.ground, a_p.w.standHeight, a_p.w.yaw);
+			return false;
 		}
 
 		void Knock(Puppet& a_p, RE::Actor* a_player)
@@ -465,6 +424,52 @@ namespace DynamicRagdollSystem
 	}
 
 	bool IsDrunk() { return g_drunk.has_value(); }
+
+	// Still on its feet: skip the from-the-floor get-up (RagdollLab Recover).
+	bool RecoverOnFeet(RE::Actor* a_actor, const BodyRef& a_pelvis, float a_ground, float a_standHeight, float a_yaw)
+	{
+		auto* world = GetWorld(a_actor);
+		auto* npWorld = world ? world->m_worldNP.get() : nullptr;
+		if (!npWorld || !a_actor->currentProcess) return false;
+		const auto id = a_actor->GetFormID();
+		Vec3 pelvis{};
+		{
+			WorldWriteLock lock{ npWorld };
+			const auto* body = lock.held ? FindBody(npWorld->m_bodyManager.m_bodies, a_pelvis) : nullptr;
+			if (!body) return false;
+			pelvis = BodyPosition(*body);
+		}
+		if (pelvis.z - a_ground < 0.6f * a_standHeight) return false;  // fallen over: vanilla get-up
+
+		a_actor->SetPosition({ pelvis.x * kPhysicsToGame, pelvis.y * kPhysicsToGame, a_ground * kPhysicsToGame }, true);
+		a_actor->data.angle = { 0.0f, 0.0f, a_yaw };
+		auto* middleHigh = a_actor->currentProcess->middleHigh;
+		if (middleHigh && !middleHigh->charController) {  // seen once on an NPC in RagdollLab: walked in place without it
+			a_actor->InitHavok();
+			REX::INFO("DynamicRagdollSystem: {:08X} recover: controller was missing, rebuilt: {}"sv, id, middleHigh->charController != nullptr);
+		}
+		// GetUpStart event (OG 0x140F70850, AE 0x140E0E020): resets the character controller from the actor.
+		using getUpStart_t = bool (*)(RE::Actor*);
+		static REL::Relocation<getUpStart_t> getUpStart{ REL::ID{ 614270, 0, 2236296 } };
+		getUpStart(a_actor);
+		// End knockdown (task 0xC, OG 0x140E743E0, AE 0x140D35E40): removes the ragdoll, knockState 0. No-op while paralyzed.
+		using end_t = void (*)(RE::AIProcess*, RE::Actor*, bool);
+		static REL::Relocation<end_t> endKnockdown{ REL::ID{ 1355205, 0, 2232386 } };
+		endKnockdown(a_actor->currentProcess, a_actor, false);
+		if (a_actor->knockState != 0) {
+			REX::INFO("DynamicRagdollSystem: {:08X} recover: knockdown did not end (state {}), vanilla get-up"sv, id, static_cast<int>(a_actor->knockState));
+			return false;
+		}
+		// The graph is still in its ragdoll state: only the get-up animation's end would take it back to locomotion.
+		const bool reverted = a_actor->RevertAnimationGraphManager(true);
+		{
+			// The hit reaction's drive blends the dynamic bodies back into the animation (fHitSoftness, fReactionTime).
+			std::scoped_lock lock{ g_mutex };
+			g_pending.push_back({ id, {}, 0x7FFFFFFF, 0.0f, false, true });
+		}
+		REX::INFO("DynamicRagdollSystem: {:08X} recovered on its feet (graph reset {})"sv, id, reverted);
+		return true;
+	}
 
 	void StopDrunk(bool a_recover, const char* a_why)
 	{

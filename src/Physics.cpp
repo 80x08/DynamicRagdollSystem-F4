@@ -362,6 +362,7 @@ namespace DynamicRagdollSystem
 		}
 
 		auto& bodies = a_world->m_bodyManager.m_bodies;
+		std::vector<std::pair<std::uint32_t, std::string_view>> cut;  // limbs without a joint (see below)
 		for (std::int32_t bone = 0; bone < static_cast<std::int32_t>(map.boneCount); ++bone) {
 			const auto bodyIndex = map.boneToBody[bone];
 			if (bodyIndex < 0 || static_cast<std::uint32_t>(bodyIndex) >= map.bodyCount) {
@@ -426,14 +427,19 @@ namespace DynamicRagdollSystem
 			a_stumble.bodies.push_back(ref);
 			// Limb cut off before this scan (live ghoul/synth): its joint is already gone, so UpdateDetached never sees it.
 			if (constraintId < 0 && parentIndex >= 0 && bodies[parentIndex].m_flags.all(RE::hknpCollisionFlagsEnum::kIsDynamic) &&
-				(arm || leg) && !a_stumble.Detached(bodyId)) {
-				a_stumble.detached.push_back(bodyId);
-				REX::INFO("DynamicRagdollSystem: {:08X} body {} '{}' has no joint (limb already dismembered); ignored"sv,
-					a_stumble.formID, bodyId, nameView);
-			}
+				(arm || leg) && !a_stumble.Detached(bodyId))
+				cut.emplace_back(bodyId, nameView);
 			if (constraintId >= 0 && parentIndex >= 0 && (spine || leg || arm)) {  // arms: dying twitches only
 				a_stumble.joints.push_back(ref);
 			}
+		}
+
+		// No joint at all: the constraints are not back yet (a knock right after a get-up), not every limb cut off.
+		// Marked detached then, the limbs stayed lost once the joints came back a frame later.
+		for (const auto& [id, name] : cut) {
+			if (a_stumble.joints.empty()) break;
+			a_stumble.detached.push_back(id);
+			REX::INFO("DynamicRagdollSystem: {:08X} body {} '{}' has no joint (limb already dismembered); ignored"sv, a_stumble.formID, id, name);
 		}
 
 		if (!a_stumble.bodies.empty()) {

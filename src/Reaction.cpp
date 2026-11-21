@@ -217,6 +217,9 @@ namespace DynamicRagdollSystem
 		}
 		if (a_hit && tracked) LogSkipOnce(a_actor, "hit hook", "first hit seen");
 		const bool queued = a_hit && QueueReaction(a_actor, *a_hit);
+		// Bash stagger queued: the ragdoll replaces the engine's stagger animation.
+		const bool bashed = a_hit && a_actor && QueueBashStagger(a_actor, *a_hit);
+		if (bashed) a_hit->stagger = {};
 		g_doHitMe(a_actor, a_hit);
 		if (a_hit && a_actor) {  // diagnostic: the killing hit's final flags/limb are logged when its death starts
 			// The push scale needs the flags the engine sets while applying the hit (blocked).
@@ -234,7 +237,7 @@ namespace DynamicRagdollSystem
 						break;
 					}
 		}
-		if (a_hit && a_actor) CountKnockdownHit(a_actor, *a_hit);  // Knockdown.cpp
+		if (a_hit && a_actor && !bashed) CountKnockdownHit(a_actor, *a_hit);  // Knockdown.cpp
 		// Head dismembered/exploded by this hit (flags read after the engine applied it).
 		using Limb = RE::BGSBodyPartDefs::LIMB_ENUM;
 		if (a_hit && tracked &&
@@ -300,7 +303,7 @@ namespace DynamicRagdollSystem
 				}
 				if (it != g_stumbles.end()) {
 					it->start = now;
-					it->end = now + kReactionTime;
+					it->end = now + (entry.recover ? kBashRecoverTime : kReactionTime);
 					it->hitDir = entry.dir;
 					it->hitBody = entry.hitBody;
 					it->pushScale = entry.pushScale;
@@ -308,7 +311,8 @@ namespace DynamicRagdollSystem
 					std::scoped_lock driveLock{ g_driveMutex };
 					if (const auto drive = g_drives.find(driver); drive != g_drives.end()) {
 						drive->second.start = now;
-						drive->second.end = now + kReactionTime;
+						drive->second.end = now + (entry.recover ? kBashRecoverTime : kReactionTime);
+						drive->second.recover = entry.recover;
 					}
 					continue;
 				}
@@ -348,15 +352,16 @@ namespace DynamicRagdollSystem
 
 			{
 				std::scoped_lock lock{ g_driveMutex };
-				g_drives[driver] = { entry.formID, now, now + kReactionTime, false,
+				g_drives[driver] = { entry.formID, now, now + (entry.recover ? kBashRecoverTime : kReactionTime), false,
 					reinterpret_cast<std::uintptr_t>(actor->currentProcess->middleHigh->animationGraphManager.get()) };
 				g_drives[driver].poseScale = root->world.scale;
+				g_drives[driver].recover = entry.recover;
 				if (std::abs(root->world.scale - 1.0f) > 0.01f)
 					REX::INFO("DynamicRagdollSystem: {:08X} skeleton scale {:.3f}: drive targets scaled"sv, entry.formID, root->world.scale);
 			}
 			{
 				std::scoped_lock lock{ g_mutex };
-				Stumble stumble{ entry.formID, now, now + kReactionTime };
+				Stumble stumble{ entry.formID, now, now + (entry.recover ? kBashRecoverTime : kReactionTime) };
 				stumble.hitDir = entry.dir;
 				stumble.hitBody = entry.hitBody;
 				stumble.pushScale = entry.pushScale;
@@ -364,7 +369,7 @@ namespace DynamicRagdollSystem
 				stumble.burnUntil = now + 0.5f;
 				g_stumbles.push_back(std::move(stumble));
 			}
-			REX::INFO("DynamicRagdollSystem: {:08X} {} reaction started (hit body {})"sv, entry.formID, entry.burn ? "burning" : "hit",
+			REX::INFO("DynamicRagdollSystem: {:08X} {} reaction started (hit body {})"sv, entry.formID, entry.burn ? "burning" : entry.recover ? "recovery" : "hit",
 				entry.hitBody);
 		}
 	}

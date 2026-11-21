@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "Walker.h"
 
 namespace DynamicRagdollSystem
 {
@@ -82,12 +82,14 @@ namespace DynamicRagdollSystem
 			}
 		}
 		StartPendingDeaths(now);
+		struct Recovery { RE::TESFormID formID; BodyRef pelvis; float ground, standHeight, yaw; };
+		std::vector<Recovery> recoveries;  // bash staggers over: RecoverOnFeet takes g_mutex, so after the loop
 		{
 			std::scoped_lock lock{ g_mutex };
 			for (auto it = g_deaths.begin(); it != g_deaths.end();) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(it->formID);
 				const float dyingStart = it->downTime > 0.0f ? it->downTime : it->end + kDownTimeout;
-				const bool revived = actor && !actor->IsDead(false) && !it->burnDown;  // resurrected (console/script) mid-death
+				const bool revived = actor && !actor->IsDead(false) && !it->burnDown && !it->bash;  // resurrected (console/script) mid-death
 				bool burnDownOver = false;
 				if (it->burnDown && actor) {
 					auto* middleHigh = actor->currentProcess ? actor->currentProcess->middleHigh : nullptr;
@@ -118,9 +120,23 @@ namespace DynamicRagdollSystem
 					burnDownOver = actor->IsDead(false) || (it->seenDown && actor->knockState == 0) || fireOut ||
 					               (!it->seenDown && now - it->start > 1.5f) || now - it->start > kBurnDownMax;
 				}
+				bool bashOver = false;
+				if (it->bash && actor) {
+					if (actor->knockState != 0) it->seenDown = true;
+					// Held down while it staggers: the engine get-up would start as soon as the ragdoll settles.
+					SetBurnParalysis(*it, actor, it->seenDown && now < it->end && !actor->IsDead(false));
+					bashOver = actor->IsDead(false) || now >= it->end || (!it->seenDown && now - it->start > 1.0f);
+				}
 				const bool finishedOff = (kDyingEndDamage > 0.0f && it->dyingDamage >= kDyingEndDamage) || it->headCut;
-				if (!actor || !actor->Get3D() || revived || burnDownOver || finishedOff || now >= dyingStart + it->dyingTime) {
+				if (!actor || !actor->Get3D() || revived || burnDownOver || bashOver || finishedOff || now >= dyingStart + it->dyingTime) {
 					SetBurnParalysis(*it, actor, false);
+					if (it->bash && actor && !actor->IsDead(false) && actor->knockState != 0) {
+						const auto w = walker::g_walkers.find(it->formID);  // gone: the stagger fell, or never stood (balance stumble)
+						const auto pelvis = w == walker::g_walkers.end() || w->second.trunk.empty() ? it->bodies.end() :
+							std::find_if(it->bodies.begin(), it->bodies.end(), [&](const BodyRef& a_b) { return a_b.id.m_value == w->second.trunk[0].id; });
+						if (pelvis != it->bodies.end()) recoveries.push_back({ it->formID, *pelvis, w->second.ground, w->second.standHeight, w->second.yaw });
+						else REX::INFO("DynamicRagdollSystem: {:08X} bash stagger over: down, vanilla get-up"sv, it->formID);
+					}
 					if (finishedOff) REX::INFO("DynamicRagdollSystem: {:08X} dying phase ended: {}"sv, it->formID,
 						it->headCut ? "head dismembered"s : std::format("{:.0f} damage taken", it->dyingDamage));
 					if (it->dyingLogged) {
@@ -144,6 +160,9 @@ namespace DynamicRagdollSystem
 				++it;
 			}
 		}
+		for (const auto& r : recoveries)
+			if (const auto actor = RE::TESForm::GetFormByID<RE::Actor>(r.formID); actor && !RecoverOnFeet(actor, r.pelvis, r.ground, r.standHeight, r.yaw))
+				REX::INFO("DynamicRagdollSystem: {:08X} bash stagger over: not on its feet, vanilla get-up"sv, r.formID);
 		ScanForKnockdowns(now);
 		{
 			std::scoped_lock lock{ g_mutex };
@@ -209,7 +228,7 @@ namespace DynamicRagdollSystem
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(death.formID);
 				if (!actor || GetWorld(actor) != a_world) continue;
 				if (InDeathStumble(death, now)) StepDeathStumble(death, actor, now);
-				else StepWrithe(death, actor, now);
+				else if (!death.bash) StepWrithe(death, actor, now);
 			}
 			for (auto& down : g_knockdowns) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(down.formID);

@@ -135,6 +135,7 @@ namespace DynamicRagdollSystem
 				                                                                               kHitSoftness;
 				const float softness = attacking ? std::max(hitSoftness, kAttackSoftness) : hitSoftness;
 				const float stiffness = state.burning ? kBurnStiffness * (1.0f - 0.6f * state.burnProgress) :
+				                        state.recover ? kRecoverStiffness :
 				                                        softness + (1.0f - softness) * smooth;
 				const float catchUp = attacking ? std::max(kMaxCatchUpSpeed, kAttackCatchUpSpeed) : kMaxCatchUpSpeed;
 				if (attacking && !state.attackLogged) {
@@ -142,7 +143,9 @@ namespace DynamicRagdollSystem
 					REX::INFO("DynamicRagdollSystem: {:08X} reaction during a melee attack (state {}): firmer, faster catch-up"sv,
 						state.formID, static_cast<std::uint32_t>(actor->meleeAttackState));
 				}
-				const float weight = std::clamp((state.end - now) / kBlendOut, 0.0f, 1.0f);
+				// Recovery: the animation takes over across the whole blend (eased), not in the last fBlendOut (a snap).
+				const float fadeOut = std::clamp((state.end - now) / std::max(state.end - state.start, 0.01f), 0.0f, 1.0f);
+				const float weight = state.recover ? fadeOut * fadeOut * (3.0f - 2.0f * fadeOut) : std::clamp((state.end - now) / kBlendOut, 0.0f, 1.0f);
 				if (a_dt > 0.0f && InjectRigidBodyControls(reinterpret_cast<std::uintptr_t>(a_output), stiffness, weight, a_dt, catchUp,
 						state.burning ? kBurnArmStiffness : -1.0f, state)) ++state.injected;
 			}
