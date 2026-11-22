@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <shared_mutex>
+
 namespace DynamicRagdollSystem
 {
 	// Writes rigid-body ragdoll controls into the generator output before driveToPose reads it, so the
@@ -96,12 +98,21 @@ namespace DynamicRagdollSystem
 	// RE_NOTES_AE.md. Clear it so the root follows the animation. Driver +0x68 -> +0x78 -> +0x30 mapper, +0x18 ragdoll
 	// skeleton: parents +0x18 (s16), bones +0x28 (0x10 each, lockTranslation at +8), count +0x30.
 	// The skeleton is shared by every human; only this mapping step was checked as a reader of the flag.
+	static std::uintptr_t RagdollSkeleton(std::uintptr_t a_driver)
+	{
+		std::uintptr_t a = 0, b = 0, mapper = 0, skeleton = 0;
+		if (!ReadField(a_driver, 0x68, a) || !a || !ReadField(a, 0x78, b) || !b || !ReadField(b, 0x30, mapper) || !mapper ||
+			!ReadField(mapper, 0x18, skeleton))
+			return 0;
+		return skeleton;
+	}
+
 	static void UnlockRagdollRoot(std::uintptr_t a_driver, RE::TESFormID a_formID)
 	{
-		std::uintptr_t a = 0, b = 0, mapper = 0, skeleton = 0, parents = 0, bones = 0;
+		const std::uintptr_t skeleton = RagdollSkeleton(a_driver);
+		std::uintptr_t parents = 0, bones = 0;
 		std::int32_t   count = 0;
-		if (!ReadField(a_driver, 0x68, a) || !a || !ReadField(a, 0x78, b) || !b || !ReadField(b, 0x30, mapper) || !mapper ||
-			!ReadField(mapper, 0x18, skeleton) || !skeleton || !ReadField(skeleton, 0x18, parents) || !ReadField(skeleton, 0x28, bones) ||
+		if (!skeleton || !ReadField(skeleton, 0x18, parents) || !ReadField(skeleton, 0x28, bones) ||
 			!ReadField(skeleton, 0x30, count) || !parents || !bones || count <= 0 || count > kMaxRagdollBones)
 			return;
 		for (std::int32_t i = 0; i < count; ++i) {
@@ -338,7 +349,47 @@ namespace DynamicRagdollSystem
 					pose[i * 12 + k] *= poseScale;
 				}
 		}
+		// The ragdoll skeleton's child bones are lockTranslation (RE_NOTES_AE.md): the mapping gives them the reference-pose
+		// translation, human length whatever the skeleton scale. Scaled track 2 alone moved the pelvis but kept human-length
+		// limbs (1.72x: crouched in midair; small: arms spread). Scale the reference pose for the call too. The skeleton is
+		// shared by every actor of the race: scaled calls run alone, every other call holds the shared lock.
+		static std::shared_mutex refPoseMutex;
+		std::shared_lock         sharedLock{ refPoseMutex, std::defer_lock };
+		std::unique_lock         uniqueLock{ refPoseMutex, std::defer_lock };
+		float*                   refPose = nullptr;
+		std::int32_t             refCount = 0;
+		if (pose) {
+			const std::uintptr_t skeleton = RagdollSkeleton(reinterpret_cast<std::uintptr_t>(a_driver));
+			std::uintptr_t       refData = 0;
+			std::int32_t         boneCount = 0;
+			// hkaSkeleton m_referencePose: hkArray<hkQsTransform> at +0x38 (data, count +0x40); count must match the bones (+0x30).
+			if (skeleton && ReadField(skeleton, 0x38, refData) && refData && ReadField(skeleton, 0x40, refCount) &&
+				ReadField(skeleton, 0x30, boneCount) && refCount == boneCount && refCount > 0 && refCount <= kMaxRagdollBones) {
+				refPose = reinterpret_cast<float*>(refData);
+			} else {
+				static bool logged = false;
+				if (!logged) {
+					logged = true;
+					REX::INFO("DynamicRagdollSystem: ragdoll reference pose unreadable (skeleton {:X}, ref count {} bones {}); limb lengths not scaled"sv,
+						skeleton, refCount, boneCount);
+				}
+			}
+		}
+		thread_local std::vector<float> savedRef;
+		if (refPose) {
+			uniqueLock.lock();
+			savedRef.resize(static_cast<std::size_t>(refCount) * 3);
+			for (std::int32_t i = 0; i < refCount; ++i)
+				for (std::int32_t k = 0; k < 3; ++k) {
+					savedRef[i * 3 + k] = refPose[i * 12 + k];
+					refPose[i * 12 + k] *= poseScale;
+				}
+		} else {
+			sharedLock.lock();
+		}
 		g_driveToPose(a_driver, a_dt, a_context, a_output);
+		for (std::int32_t i = 0; refPose && i < refCount; ++i)
+			for (std::int32_t k = 0; k < 3; ++k) refPose[i * 12 + k] = savedRef[i * 3 + k];
 		// Every bone keyframed: driveToPose sets driver+0xBB and postPhysics (0x1416FF3A0) then skips the ragdoll blend,
 		// so the animation showed at once. Cleared here, between the two, the pinned pose still blends into the animation.
 		// (A hand left unpinned instead hung at odd wrist angles and twisted the forearm/finger bones.)

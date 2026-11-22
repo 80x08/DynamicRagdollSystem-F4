@@ -161,7 +161,8 @@ then dropped when the reaction ended. Standing NPCs had their trunk moved ~16 up
 OG followed the animation.
 
 Cause: `driveToPose` builds its targets by mapping the animation pose onto the ragdoll skeleton
-(`hkaSkeletonMapper::mapPose`, mode 2 = enforce constraints against the current pose). The last step
+(`hkaSkeletonMapper::mapPose`, mode 2 = enforce constraints against the pose passed in, here the ragdoll skeleton's
+reference pose; see "Scaled skeletons" below). The last step
 (OG `0x141886510`, AE `0x141492BE0`, identical) gives every **parentless** bone with `lockTranslation` set its
 **reference-pose** translation. On AE the ragdoll root (pelvis) has the flag, so its drive target was always the
 standing reference pelvis, model space (0, 0, 68.9) game units, whatever the animation was doing. Measured by
@@ -215,6 +216,42 @@ Side effects of clearing it: on AE the cleared skeleton is `Ragdoll_NPC COM`, sh
 flag stays clear for the session. Any vanilla `driveToPose` mapping onto it (knockdown/get-up blending, other driven
 ragdolls) then places the root from the animation, as OG does. The flag is not saved; if the resource reloads, the
 next reaction clears it again. Only the mapper's enforce step was checked as a reader of the flag.
+
+### Scaled skeletons: child `lockTranslation` (big NPCs crouch, small NPCs A-pose)
+
+Symptom: during a hit reaction, a 1.718x human (race height) bent its knees and pulled its arms in, crouching in
+midair with the trunk held at the right height; a small-scale human spread its arms into an A-pose.
+
+Cause: the same mapping step. The ragdoll skeleton's **child** bones are `lockTranslation` 1 (`Ragdoll_NPC COM`,
+above), so their drive targets get the skeleton's **reference-pose** translation: human bone lengths whatever the
+skeleton scale. `driveToPose` reads the animation's local pose (track 2) without the root's scale, so the pelvis
+target is human height too. The ragdoll bodies themselves are sized to the skeleton (`FitJointsToSkeleton` finds only
+2 of 15 joints off, worst 19%). Tested on a 1.718x NPC:
+
+| Track 2 translations scaled | Reference pose scaled | Result |
+|---|---|---|
+| no | no | trunk 50–77 units down, feet through the floor |
+| yes | no | trunk held, limbs short: crouch in midair |
+| yes | yes | follows the animation |
+
+- Confirmed in Ghidra (AE 1.11.240). Map anim → ragdoll `0x141395BC0` (mapper = driver `+0x68` → `+0x78` → `+0x30`,
+  ragdoll skeleton = mapper `+0x18`):
+  - `FUN_141491BA0(boneCount, skeleton+0x18 parents, skeleton+0x38 refPose, out)`: the ragdoll's reference pose
+    (local → model) is the starting pose;
+  - `mapPose(mapper, animModel, skeleton+0x38, ragdollModel, 2)` `0x1414853D0`: mode 2 calls the enforce step
+    `0x141492BE0(skeleton, skeleton+0x38, ragdollModel)`.
+  - Enforce step: for every bone with `lockTranslation`, parentless → copy the reference translation; otherwise →
+    parent model translation + parent rotation · reference local translation. **The parent's scale is not applied**,
+    so a scaled skeleton can't lengthen locked bones.
+  - Mode 1 (`0x141492A90`) reads `skeleton+0x38` itself. So `m_referencePose` is the `hkQsTransform` (0x30) array at
+    `+0x38`, one per bone (`+0x30` count). The `+0x40` hkArray size is the usual Havok layout, not read by these
+    functions; the code requires it to equal `+0x30`.
+
+Fix (`Hook_DriveToPose` in `Drive.cpp`, both runtimes): for an actor whose skeleton root scale differs from 1 by
+more than 0.01, multiply the track 2 and reference-pose translations by the scale for the call, then restore both.
+The skeleton is shared (every human on AE), so a scaled call holds a `shared_mutex` exclusively and every other
+`driveToPose` call holds it shared. The explicit-pose (track 18) rise on scaled skeletons (RE_NOTES.md) is separate
+and untouched.
 
 ---
 

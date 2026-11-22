@@ -401,7 +401,7 @@ namespace DynamicRagdollSystem
 
 	inline Range kDeathStumbleTime{ 2.3f, 3.0f }; // seconds the dead body tries to stay up before collapsing
 	inline Range kDeathSupport{ 0.6f, 0.8f };     // fraction of gravity the controller carries at the moment of death
-	inline float kDeathStiffness = 0.2f;         // scales joint and upright stiffness of the dying body
+	inline float kDeathStiffness = 0.1f;         // scales joint and upright stiffness of the dying body
 	inline float kDeathPushScale = 0.4f;         // killing-hit push as a fraction of fHitPush/fBodyPush
 	inline Range kDeathUpright{ 0.4f, 0.6f };     // upright torque of the dying body: low lets it tip, so it has to step
 	inline float kCatchSpeed = 4.0f;             // physics units/s: below this the dying body gets full help (running ≈ 4–5)
@@ -511,6 +511,7 @@ namespace DynamicRagdollSystem
 	inline bool  kHitKnockPowerArmor = false;
 	inline bool  kHitKnockHumanoidOnly = true;
 	inline bool  kHitKnockPlayerOnly = false;       // only hits from the player count
+	inline float kGetUpSpeed = 1.5f;                // [General] animation speed multiplier while getting up (knockState kKnockGetUp), all ragdoll recoveries
 	// [Melee] the player's bash staggers the NPC (the death stagger, alive); [Knockdown] power armor, humanoid only and blacklist apply.
 	inline float kBashStaggerChance = 0.5f;
 	inline bool  kBashPowerArmor = false;           // NPCs in power armor can be bash-staggered
@@ -925,6 +926,7 @@ namespace DynamicRagdollSystem
 	// PlayerCharacter overrides slot 0x117 (OG 0x140EBAEE0, AE 0x140D78A30): player bookkeeping, then a direct
 	// (non-virtual) call to Actor::KillImpl, so the Actor hook never sees the player and this one passes ragdollInstant on.
 	inline REL::THookVFT<void(RE::Actor*, RE::Actor*, float, bool, bool)>* g_playerKillHook = nullptr;
+	inline REL::THookVFT<void(RE::Actor*, float)>* g_updateAnimHook = nullptr;  // Actor::UpdateAnimation (vfunc 0x9F): kGetUpSpeed
 
 
 	// Interiors use bhkWorld; exterior worldspaces use bhkWorldM (own vtable), so both are hooked.

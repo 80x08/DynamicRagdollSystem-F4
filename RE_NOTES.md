@@ -201,7 +201,8 @@ The keyframe loop applies record `r` to the body of `remap(r)`: global ID 152436
 vfunc `+0x18(remapper, context, r & 0xFFFF)` → s16 bone, then ragdoll interface (`driver+0x70`) vfunc `+0x38(bone)` →
 body object (hknpBodyId at `+0x10`). Identity on humans; a permutation on super mutants. Scaled skeletons (1.718):
 explicit poses rise straight up (x, y and rotation exact): +6.42 / +7.34 m at 0.1 s in two runs, ~8.8 m by 0.5 s, so
-not a fixed offset. Cause not traced; scaled skeletons are not pinned.
+not a fixed offset. Cause not traced; scaled skeletons are not pinned. (Driven limb lengths on scaled skeletons:
+RE_NOTES_AE.md, "Scaled skeletons: child `lockTranslation`".)
 
 World-from-model modes (exe strings `0x2E641B0`…): USE_OLD 0, USE_INPUT 1, COMPUTE 2, NONE 3, RAGDOLL 4.
 

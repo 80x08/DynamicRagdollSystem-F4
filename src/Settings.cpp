@@ -114,6 +114,8 @@ namespace DynamicRagdollSystem
 			first = false;
 			ReadBool(root, "General", "bEnableHotReload", kIniHotReload);
 		}
+		ReadFloat(root, "General", "fGetUpSpeed", kGetUpSpeed, 0.1f, 5.0f);
+		REX::INFO("DynamicRagdollSystem: get-up animation speed x{}"sv, kGetUpSpeed);
 		const auto read = [&](const char* a_key, float& a_value, float a_min, float a_max) { ReadFloat(root, "Reaction", a_key, a_value, a_min, a_max); };
 		ReadBool(root, "Player", "bHitReactions", kPlayerHitReactions);
 		ReadBool(root, "Player", "bDeath", kPlayerDeath);

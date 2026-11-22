@@ -298,6 +298,21 @@ namespace DynamicRagdollSystem
 	}
 
 
+	// Whole graph runs faster while getting up: clip, ragdoll blend and root motion together; GetUpEnd comes sooner on its own.
+	void Hook_UpdateAnimation(RE::Actor* a_actor, float a_delta)
+	{
+		if (kGetUpSpeed != 1.0f && a_actor->knockState == kKnockGetUp) {
+			static bool logged = false;
+			if (!logged) {
+				logged = true;
+				REX::INFO("DynamicRagdollSystem: {:08X} get-up sped up x{}"sv, a_actor->formID, kGetUpSpeed);
+			}
+			a_delta *= kGetUpSpeed;
+		}
+		(*g_updateAnimHook)(a_actor, a_delta);
+	}
+
+
 	void InstallHooks()
 	{
 		ResolveImpulseFunction();
@@ -324,6 +339,12 @@ namespace DynamicRagdollSystem
 		killHook.Init();
 		killHook.Enable();
 		g_killHook = &killHook;
+		static REL::THookVFT<void(RE::Actor*, float)> updateAnimHook{
+			REL::Offset{ RE::VTABLE::Actor[0].offset() }, 0x9F, &Hook_UpdateAnimation
+		};
+		updateAnimHook.Init();
+		updateAnimHook.Enable();
+		g_updateAnimHook = &updateAnimHook;
 		// Only with [Player] bDeath on at game start: otherwise the player's vtable stays untouched (other player mods).
 		if (kPlayerDeath) {
 			static REL::THookVFT<void(RE::Actor*, RE::Actor*, float, bool, bool)> playerKillHook{
