@@ -176,6 +176,11 @@ namespace DynamicRagdollSystem
 			readKnock("fHeavyHitForce", kHeavyHitForce, 0.0f, 1000.0f);
 			readKnock("fHitKnockReach", kHitKnockReach, 1.0f, 1000.0f);
 			readKnock("fHitKnockMinFraction", kHitKnockMinFraction, 0.0f, 1.0f);
+			readKnock("fDownedHitPush", kDownedHitPush, 0.0f, 50.0f);
+			readKnock("fDownedHitGrip", kDownedHitGrip, 0.0f, 30.0f);
+			readKnock("fDownedHitSpasm", kDownedHitSpasm, 0.0f, 30.0f);
+			readKnock("fDownedHitTwitch", kDownedHitTwitch, 0.0f, 20.0f);
+			readKnock("fDownedHitKick", kDownedHitKick, 0.0f, 10.0f);
 			readKnock("fKnockdownCooldown", kHitKnockCooldown, 0.0f, 600.0f);
 			ReadBool(root, "Knockdown", "bKnockdownPowerArmor", kHitKnockPowerArmor);
 			ReadBool(root, "Knockdown", "bKnockdownHumanoidOnly", kHitKnockHumanoidOnly);

@@ -82,6 +82,41 @@ namespace DynamicRagdollSystem
 		}
 	}
 
+	// Shot while lying in the engine ragdoll (alive): vanilla leaves the body still. Re-arms the knockdown's kick push
+	// (falloff from the impact point, StepKnockdownFall) for this hit. Several hits in one step: the last one wins.
+	void PushDownedHit(RE::Actor* a_actor, const RE::HitData& a_hit)
+	{
+		if ((kDownedHitPush <= 0.0f && kDownedHitGrip <= 0.0f && kDownedHitSpasm <= 0.0f) || a_actor->IsDead(false) || a_actor->knockState == 0 || a_actor->knockState == kKnockGetUp ||
+			a_actor->knockState == kKnockDown || a_hit.flags.any(RE::HitData::Flag::kExplosion)) return;
+		Vec3 point{};
+		if (!ReadImpactPoint(a_actor, a_hit, point)) return;  // shortcut: hits without an impact point (some melee) get no push
+		Vec3 dir{};
+		std::uint32_t hitBody = 0x7FFFFFFF;
+		ReadHitInfo(a_actor, a_hit, dir, hitBody);
+		const float speed = kDownedHitPush * HitPushScale(a_hit);
+		std::scoped_lock lock{ g_mutex };
+		for (auto& down : g_knockdowns)
+			if (down.formID == a_actor->GetFormID()) {
+				if (speed > 0.0f) {
+					down.kickPending = true;
+					down.kickPoint = point;
+					down.kickDir = dir;
+					down.kickSpeed = speed;
+				}
+				// A hand clutches the new wound (ApplyGrip); another body part hit: the nearest hand to it is picked again.
+				if (kDownedHitGrip > 0.0f && hitBody != 0x7FFFFFFF) {
+					if (hitBody != down.hitBody) down.gripChosen = false, down.gripHand = 0;
+					down.hitBody = hitBody;
+					down.gripUntil = NowSeconds() + kDownedHitGrip;
+				}
+				if (kDownedHitSpasm > 0.0f) {
+					down.hurtStart = NowSeconds();
+					down.nextTwitch = 0.0f;  // the first spasm on the hit
+				}
+				break;
+			}
+	}
+
 	// [Melee] The player's bash: rolled fBashStaggerChance, queued as a knockdown that ProcessPendingKnocks turns into
 	// the bash stagger. Called before the engine applies the hit, so the caller can drop its vanilla stagger.
 	bool QueueBashStagger(RE::Actor* a_actor, const RE::HitData& a_hit)
@@ -287,7 +322,7 @@ namespace DynamicRagdollSystem
 				RE::hkVector4f nativeImpulse{ impulse.x, impulse.y, impulse.z, 0.0f };
 				g_linearImpulse(npWorld, s.ref->id.m_value, &nativeImpulse);
 			}
-			REX::INFO("DynamicRagdollSystem: {:08X} hit knockdown push: speed {:.1f} from the impact point"sv, a_down.formID, a_down.kickSpeed);
+			REX::INFO("DynamicRagdollSystem: {:08X} knockdown hit push: speed {:.1f} from the impact point"sv, a_down.formID, a_down.kickSpeed);
 		}
 		if (a_down.targets.empty()) {  // UpdateGround only casts once a pose was captured
 			for (const auto& s : samples)
@@ -295,6 +330,24 @@ namespace DynamicRagdollSystem
 			return;
 		}
 		const float dt = ControlDt(a_down.lastStep, a_now);
+		char gripSide = 0;
+		if (a_now < a_down.gripUntil) {  // shot while down: clutch the wound, loosening over the last half second
+			ApplyGrip(a_down, npWorld, samples, dt, std::min(1.0f, (a_down.gripUntil - a_now) / 0.5f));
+			for (const auto& s : samples)
+				if (s.ref->id.m_value == a_down.gripHand) gripSide = s.ref->side;
+		}
+		// Shot while down: spasms (the dying-phase twitch) and leg kicks (the flail rhythm on the legs), fading out.
+		if (const float hurt = a_down.hurtStart > 0.0f ? 1.0f - (a_now - a_down.hurtStart) / std::max(kDownedHitSpasm, 0.01f) : 0.0f; hurt > 0.0f) {
+			if (kDownedHitTwitch > 0.0f) ApplyTwitch(a_down, npWorld, samples, dt, a_now, kDownedHitTwitch * hurt, 0.0f);
+			if (kDownedHitKick > 0.0f) {
+				InitFlail(a_down);
+				const float gain = std::min(1.0f, kFlailGain * dt) * hurt;
+				for (std::size_t i = 0; i < a_down.joints.size(); ++i)
+					if (a_down.joints[i].leg)
+						DriveFlailJoint(npWorld, a_down, i, a_now - a_down.start, kFlailArmSpeed * 0.6f * kDownedHitKick, gain,
+							kFlailMaxTorque * kDownedHitKick * dt);
+			}
+		}
 		const auto [low, high] = TrunkEnds(samples);  // pelvis / SPINE1, chest
 		if (!low || !high || low == high || a_down.groundFeet <= 0) return;
 
@@ -311,7 +364,7 @@ namespace DynamicRagdollSystem
 		if (a_down.hitKnock && falling) flailAmount = 1.0f;  // hit knockdowns rarely leave the ground: flail all the way down
 
 		if (flailAmount > 0.0f && a_down.flail > 0.0f) {
-			const auto flailing = FlailLimbs(npWorld, a_down, a_now - a_down.start, dt, flailAmount, a_down.flail * flailAmount, 0, 0);
+			const auto flailing = FlailLimbs(npWorld, a_down, a_now - a_down.start, dt, flailAmount, a_down.flail * flailAmount, gripSide, 0);
 			if (!a_down.flailLogged && flailing > 0) {
 				a_down.flailLogged = true;
 				REX::INFO("DynamicRagdollSystem: {:08X} knockdown: flailing ({} limb joints, clearance {:.2f})"sv, a_down.formID, flailing, clearance);

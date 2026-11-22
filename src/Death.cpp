@@ -670,6 +670,74 @@ namespace DynamicRagdollSystem
 	}
 
 
+	// One twitch step: a short spasm burst on a random joint (not the clutching arm). a_twitch: strength now;
+	// a_progress 0..1 thins the spasms out. Also used for a knocked-down NPC that is shot (Knockdown.cpp).
+	void ApplyTwitch(Death& a_death, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_now,
+		float twitch, float progress)
+	{
+		// A twitch is a short burst: the same joint is driven the same way for kTwitchBurst. A single-frame kick
+		// was eaten by joint friction and ground contact within a frame or two.
+		if (twitch > 0.0f && a_now >= a_death.nextTwitch && !a_death.joints.empty() && g_angularImpulse) {
+			a_death.nextTwitch = a_now + (0.15f + 0.35f * Random()) * (1.0f + 1.5f * progress);  // spasms thin out
+			// Any spine/leg/arm joint except the arm that clutches the wound.
+			char gripSide = 0;
+			for (const auto& sample : samples)
+				if (sample.ref->id.m_value == a_death.gripHand) gripSide = sample.ref->side;
+			a_death.twitchJoint = -1;
+			for (int attempt = 0; attempt < 6 && a_death.twitchJoint < 0; ++attempt) {
+				const auto pick = static_cast<std::int32_t>(Rng()() % a_death.joints.size());
+				const auto& candidate = a_death.joints[static_cast<std::size_t>(pick)];
+				if (!(candidate.arm && gripSide && candidate.side == gripSide) && !a_death.Detached(candidate.id.m_value)) a_death.twitchJoint = pick;
+			}
+			a_death.twitchAxis = Unit(Vec3{ Random() * 2.0f - 1.0f, Random() * 2.0f - 1.0f, Random() * 2.0f - 1.0f });
+			// Light limbs (calves, feet, hands) twitch less: same speed change on a light part flung it high.
+			a_death.twitchScale = 1.0f;
+			if (a_death.twitchJoint >= 0) {
+				const auto& picked = a_death.joints[static_cast<std::size_t>(a_death.twitchJoint)];
+				float heaviest = 0.0f, mass = 0.0f;
+				for (const auto& sample : samples) {
+					const float m = 1.0f / sample.motion.inverseMass;
+					for (const auto& joint : a_death.joints)
+						if (joint.id.m_value == sample.ref->id.m_value) heaviest = std::max(heaviest, m);
+					if (sample.ref->id.m_value == picked.id.m_value) mass = m;
+				}
+				if (heaviest > 0.0f && mass > 0.0f) a_death.twitchScale = std::clamp(mass / heaviest, kTwitchMinScale, 1.0f);
+			}
+			a_death.twitchEnd = a_now + kTwitchBurst;
+			++a_death.twitchCount;
+			// Jolt: a sharp jerk on the limb, equal and opposite on the part it hangs from (no net shove).
+			if (a_death.twitchJoint >= 0) {
+				const auto& joint = a_death.joints[static_cast<std::size_t>(a_death.twitchJoint)];
+				const DeathSample* child = nullptr;
+				const DeathSample* parent = nullptr;
+				for (const auto& sample : samples) {
+					if (sample.ref->id.m_value == joint.id.m_value) child = &sample;
+					if (sample.ref->id.m_value == joint.parentId.m_value) parent = &sample;
+				}
+				if (child && parent) {
+					// Mostly up/sideways for the trunk and arms; legs jerk sideways only, so they do not kick up.
+					const float up = joint.leg ? 0.0f : Random() * 1.5f;
+					const Vec3 dir = Unit(Vec3{ Random() * 2.0f - 1.0f, Random() * 2.0f - 1.0f, up });
+					const auto impulse = Scale(dir, kTwitchJolt * twitch * a_death.twitchScale / child->motion.inverseMass);
+					RE::hkVector4f toChild{ impulse.x, impulse.y, impulse.z, 0.0f };
+					RE::hkVector4f toParent{ -impulse.x, -impulse.y, -impulse.z, 0.0f };
+					g_linearImpulse(npWorld, joint.id.m_value, &toChild);
+					g_linearImpulse(npWorld, joint.parentId.m_value, &toParent);
+				}
+			}
+		}
+		if (a_death.twitchJoint >= 0 && a_now < a_death.twitchEnd && twitch > 0.0f) {
+			const auto& joint = a_death.joints[static_cast<std::size_t>(a_death.twitchJoint)];
+			BodyRef parentRef{};
+			parentRef.index = joint.parentIndex;
+			parentRef.id = joint.parentId;
+			if (ApplyJointImpulse(npWorld, joint, parentRef, Scale(a_death.twitchAxis, kTwitchAccel * twitch * a_death.twitchScale * dt),
+					kTwitchMaxTorque * twitch * dt)) {
+				++a_death.twitchHits;
+			}
+		}
+	}
+
 	// After the stumble: the body lies there clutching the wound, twitching and now and then rolling, with
 	// everything decaying to fully limp over kDyingTime. Twitches are paired joint impulses (spine/legs; the
 	// gripping arm is not in the joint list); rolls are a small sideways kick on the trunk.
@@ -756,67 +824,7 @@ namespace DynamicRagdollSystem
 		if (a_death.grip) ApplyGrip(a_death, npWorld, samples, dt, std::min(1.0f, 2.0f * strength));
 
 		const float twitch = a_death.twitch * strength;
-		// A twitch is a short burst: the same joint is driven the same way for kTwitchBurst. A single-frame kick
-		// was eaten by joint friction and ground contact within a frame or two.
-		if (twitch > 0.0f && a_now >= a_death.nextTwitch && !a_death.joints.empty() && g_angularImpulse) {
-			a_death.nextTwitch = a_now + (0.15f + 0.35f * Random()) * (1.0f + 1.5f * progress);  // spasms thin out
-			// Any spine/leg/arm joint except the arm that clutches the wound.
-			char gripSide = 0;
-			for (const auto& sample : samples)
-				if (sample.ref->id.m_value == a_death.gripHand) gripSide = sample.ref->side;
-			a_death.twitchJoint = -1;
-			for (int attempt = 0; attempt < 6 && a_death.twitchJoint < 0; ++attempt) {
-				const auto pick = static_cast<std::int32_t>(Rng()() % a_death.joints.size());
-				const auto& candidate = a_death.joints[static_cast<std::size_t>(pick)];
-				if (!(candidate.arm && gripSide && candidate.side == gripSide) && !a_death.Detached(candidate.id.m_value)) a_death.twitchJoint = pick;
-			}
-			a_death.twitchAxis = Unit(Vec3{ Random() * 2.0f - 1.0f, Random() * 2.0f - 1.0f, Random() * 2.0f - 1.0f });
-			// Light limbs (calves, feet, hands) twitch less: same speed change on a light part flung it high.
-			a_death.twitchScale = 1.0f;
-			if (a_death.twitchJoint >= 0) {
-				const auto& picked = a_death.joints[static_cast<std::size_t>(a_death.twitchJoint)];
-				float heaviest = 0.0f, mass = 0.0f;
-				for (const auto& sample : samples) {
-					const float m = 1.0f / sample.motion.inverseMass;
-					for (const auto& joint : a_death.joints)
-						if (joint.id.m_value == sample.ref->id.m_value) heaviest = std::max(heaviest, m);
-					if (sample.ref->id.m_value == picked.id.m_value) mass = m;
-				}
-				if (heaviest > 0.0f && mass > 0.0f) a_death.twitchScale = std::clamp(mass / heaviest, kTwitchMinScale, 1.0f);
-			}
-			a_death.twitchEnd = a_now + kTwitchBurst;
-			++a_death.twitchCount;
-			// Jolt: a sharp jerk on the limb, equal and opposite on the part it hangs from (no net shove).
-			if (a_death.twitchJoint >= 0) {
-				const auto& joint = a_death.joints[static_cast<std::size_t>(a_death.twitchJoint)];
-				const DeathSample* child = nullptr;
-				const DeathSample* parent = nullptr;
-				for (const auto& sample : samples) {
-					if (sample.ref->id.m_value == joint.id.m_value) child = &sample;
-					if (sample.ref->id.m_value == joint.parentId.m_value) parent = &sample;
-				}
-				if (child && parent) {
-					// Mostly up/sideways for the trunk and arms; legs jerk sideways only, so they do not kick up.
-					const float up = joint.leg ? 0.0f : Random() * 1.5f;
-					const Vec3 dir = Unit(Vec3{ Random() * 2.0f - 1.0f, Random() * 2.0f - 1.0f, up });
-					const auto impulse = Scale(dir, kTwitchJolt * twitch * a_death.twitchScale / child->motion.inverseMass);
-					RE::hkVector4f toChild{ impulse.x, impulse.y, impulse.z, 0.0f };
-					RE::hkVector4f toParent{ -impulse.x, -impulse.y, -impulse.z, 0.0f };
-					g_linearImpulse(npWorld, joint.id.m_value, &toChild);
-					g_linearImpulse(npWorld, joint.parentId.m_value, &toParent);
-				}
-			}
-		}
-		if (a_death.twitchJoint >= 0 && a_now < a_death.twitchEnd && twitch > 0.0f) {
-			const auto& joint = a_death.joints[static_cast<std::size_t>(a_death.twitchJoint)];
-			BodyRef parentRef{};
-			parentRef.index = joint.parentIndex;
-			parentRef.id = joint.parentId;
-			if (ApplyJointImpulse(npWorld, joint, parentRef, Scale(a_death.twitchAxis, kTwitchAccel * twitch * a_death.twitchScale * dt),
-					kTwitchMaxTorque * twitch * dt)) {
-				++a_death.twitchHits;
-			}
-		}
+		ApplyTwitch(a_death, npWorld, samples, dt, a_now, twitch, progress);
 		// Roll: turn the trunk about its own long axis (pelvis → chest), the axis a lying body rolls around,
 		// for a short burst. A one-frame sideways kick only slid the body along the ground.
 		const float roll = a_death.roll * std::max(strength, kRollMinStrength);

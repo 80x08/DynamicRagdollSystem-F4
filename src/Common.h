@@ -221,6 +221,8 @@ namespace DynamicRagdollSystem
 		std::uint32_t           steps{ 0 };
 		std::uint32_t           gripHand{ 0 };   // body id of the hand clutching the wound, 0 = none chosen yet
 		bool                    gripChosen{ false };
+		float                   gripUntil{ 0.0f };  // knocked down (alive): the hand clutches the last wound until then
+		float                   hurtStart{ 0.0f };  // ... last hit while down: twitches and kicks fade out over kDownedHitSpasm
 		float                   nextTwitch{ 0.0f };  // dying phase (after the stumble)
 		std::int32_t            twitchJoint{ -1 };   // joint of the current twitch burst
 		Vec3                    twitchAxis{};
@@ -507,6 +509,11 @@ namespace DynamicRagdollSystem
 	inline float kHeavyHitForce = 16.5f;
 	inline float kHitKnockReach = 40.0f;         // game units from the impact point where the push is at its minimum
 	inline float kHitKnockMinFraction = 0.1f;    // push of the farthest bodies, fraction of the force
+	inline float kDownedHitPush = 3.5f;          // speed of the body part hit while knocked down (alive), 0 = off
+	inline float kDownedHitGrip = 2.0f;          // s a hand clutches the wound of a hit while knocked down, 0 = off
+	inline float kDownedHitSpasm = 2.5f;         // s of twitching and leg kicks after such a hit, 0 = off
+	inline float kDownedHitTwitch = 5.0f;        // ... twitch strength (as [Death] fTwitchStrength)
+	inline float kDownedHitKick = 3.0f;          // ... leg kick strength (as the flail), 0 = no kicks
 	inline float kHitKnockCooldown = 3.0f;          // s after a knockdown before the next one (either kind)
 	inline bool  kHitKnockPowerArmor = false;
 	inline bool  kHitKnockHumanoidOnly = true;
@@ -1035,11 +1042,14 @@ namespace DynamicRagdollSystem
 	void StepKnockdownFall(Death& a_down, RE::Actor* a_actor, float a_now);
 	void KnockOverStanding(RE::bhkWorld* a_world, float a_now);
 	void CountKnockdownHit(RE::Actor* a_actor, const RE::HitData& a_hit);
+	void PushDownedHit(RE::Actor* a_actor, const RE::HitData& a_hit);
 	void ProcessPendingKnocks();
 	bool QueueBashStagger(RE::Actor* a_actor, const RE::HitData& a_hit);  // true: queued (the hit is not also counted for a knockdown)
 
 	// Death.cpp
 	void ApplyGrip(Death& a_stumble, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_strength);
+	void ApplyTwitch(Death& a_death, RE::hknpBSWorld* npWorld, const std::vector<DeathSample>& samples, float dt, float a_now,
+		float twitch, float progress);
 	bool CastGround(RE::TESObjectCELL* a_cell, Vec3 a_pos, float& a_ground);
 	void UpdateGround(Death& a_death, RE::Actor* a_actor, RE::bhkWorld* a_world);
 	void CastCrawlRay(Death& a_death, RE::Actor* a_actor, RE::bhkWorld* a_world);

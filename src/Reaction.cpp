@@ -238,6 +238,7 @@ namespace DynamicRagdollSystem
 					}
 		}
 		if (a_hit && a_actor && !bashed) CountKnockdownHit(a_actor, *a_hit);  // Knockdown.cpp
+		if (a_hit && a_actor && !bashed) PushDownedHit(a_actor, *a_hit);
 		// Head dismembered/exploded by this hit (flags read after the engine applied it).
 		using Limb = RE::BGSBodyPartDefs::LIMB_ENUM;
 		if (a_hit && tracked &&

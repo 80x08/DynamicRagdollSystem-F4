@@ -78,6 +78,18 @@ fHitKnockReach = 40.0
 # Push of the farthest body parts, as a fraction of the force (0 = they only follow through the joints). Range 0-1.
 fHitKnockMinFraction = 0.1
 
+# NPCs still feel and react to pain while in alive ragdoll state. Keep in mind you may stunlock enemies in ragdoll with a high ROF weapon if it pushes too much.
+# Shooting an NPC that is already knocked down (alive, lying in its ragdoll), force of the body part that was hit. Range 0-50.
+fDownedHitPush = 3.5
+# Seconds a hand clutches the wound after such a hit (alive, lying in its ragdoll). 0 = off. Range 0-30.
+fDownedHitGrip = 2.0
+# Seconds of spasms after such a hit: twitches (the [Death] dying twitch) and leg kicks. Each hit restarts it. 0 = off. Range 0-30.
+fDownedHitSpasm = 2.5
+# Strength of body twitches when shot (alive, lying in its ragdoll). 0 = none. Range 0-20.
+fDownedHitTwitch = 5
+# Strength of the leg kicks when shot (alive, lying in its ragdoll). 0 = none. Range 0-10.
+fDownedHitKick = 3
+
 # Seconds after a knockdown before the same NPC can be knocked down by hits again. Range 0-600.
 fKnockdownCooldown = 3.0
 # true = NPCs in power armor can be knocked down by hits.
